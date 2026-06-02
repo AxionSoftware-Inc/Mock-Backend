@@ -13,6 +13,14 @@
 # testing
 /coverage
 
+# local mock API records
+/.data/
+
+# python
+backend/.venv/
+__pycache__/
+.pytest_cache/
+
 # next.js
 /.next/
 /out/

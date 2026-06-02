@@ -1,65 +1,74 @@
-import Image from "next/image";
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import type { MockProjectSummary } from "@/lib/types";
 
 export default function Home() {
+  const [projects, setProjects] = useState<MockProjectSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((response) => response.json())
+      .then(setProjects)
+      .finally(() => setLoading(false));
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main>
+      <header className="topbar">
+        <Link className="brand" href="/">mockbase</Link>
+        <nav>
+          <Link className="nav-active" href="/">Projects</Link>
+          <Link href="/create">Yangi API</Link>
+          <Link href="/nodes">Node lab</Link>
+        </nav>
+      </header>
+      <section className="dashboard-hero">
+        <div>
+          <p className="eyebrow">MOCK BACKEND WORKSPACE</p>
+          <h1>API projectlaringiz.</h1>
+          <p>Frontend uchun kerakli CRUD backendlarni yarating va bitta joydan boshqaring.</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <Link className="hero-action" href="/create">+ Yangi project</Link>
+      </section>
+      <section className="dashboard-section">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">PROJECTS</p>
+            <h2>Barcha API’lar</h2>
+          </div>
+          <span className="count-badge">{projects.length} project</span>
         </div>
-      </main>
-    </div>
+        {loading ? (
+          <div className="card empty-state">Projectlar yuklanmoqda...</div>
+        ) : projects.length === 0 ? (
+          <div className="card empty-state">
+            <b>Hali project yo‘q.</b>
+            <p>Birinchi mock backend projectini yarating.</p>
+            <Link className="hero-action" href="/create">Project yaratish</Link>
+          </div>
+        ) : (
+          <div className="dashboard-grid">
+            {projects.map((project) => (
+              <Link className="dashboard-card" href={`/projects/${project.slug}`} key={project.id}>
+                <div className="card-title">
+                  <span className="project-mark">{project.name.slice(0, 1).toUpperCase()}</span>
+                  <span className="api-state ready">ACTIVE</span>
+                </div>
+                <h3>{project.name}</h3>
+                <code>{project.slug}.localhost:3000</code>
+                <div className="project-stats">
+                  <span><b>{project.resourceCount}</b> resources</span>
+                  <span><b>{project.recordCount}</b> records</span>
+                </div>
+                <span className="open-label">Workspace’ni ochish →</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }

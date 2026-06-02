@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# mockbase
 
-## Getting Started
+A multi-tenant mock backend builder. Next.js serves the project dashboard while
+one shared FastAPI service handles every user-created API through PostgreSQL.
 
-First, run the development server:
+## First setup
+
+PostgreSQL must expose a local `mockbase` database. With Postgres.app:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+/Applications/Postgres.app/Contents/Versions/latest/bin/createdb mockbase
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements-dev.txt
+npm run db:init
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Start locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Run the API and dashboard in separate terminals:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev:api
+npm run dev
+```
 
-## Learn More
+Open [http://localhost:3000](http://localhost:3000). FastAPI documentation is
+available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-To learn more about Next.js, take a look at the following resources:
+A generated backend works through both URL styles:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```text
+http://localhost:3000/api/mock/blog-api/posts
+http://blog-api.localhost:3000/posts
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The MVP supports multiple resources inside a project, schema editing with
+existing-record validation, project and resource deletion, and full record
+CRUD from the web workspace.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See [docs/architecture.md](docs/architecture.md) for the storage model and
+production wildcard subdomain setup.
