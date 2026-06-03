@@ -153,7 +153,7 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weig
 }
 
 /* Node editor lab */
-.nodes-page { min-height: 100vh; }
+.nodes-page { height: 100vh; min-height: 100vh; overflow: hidden; }
 .nodes-heading, .nodes-shell { width: min(1240px, 92vw); margin-inline: auto; }
 .nodes-heading { display: flex; align-items: end; justify-content: space-between; gap: 30px; padding: 42px 0 22px; }
 .nodes-heading h1 { margin-bottom: 10px; font-size: clamp(40px, 5vw, 60px); }
@@ -198,11 +198,35 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weig
 .nodes-toolbar button { padding: 8px 11px; }
 .nodes-toolbar .secondary { background: #30413d; color: #d7e2de; }
 .editor-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
-.save-state { border-radius: 20px; background: #30413d; padding: 5px 8px; color: #b9cbc5; font-size: 10px; font-weight: 800; }
+.save-state { display: inline-flex; align-items: center; gap: 6px; border-radius: 20px; background: #30413d; padding: 5px 8px; color: #b9cbc5; font-size: 10px; font-weight: 800; }
+.save-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(255,255,255,.04); }
 .save-state.dirty { background: #5a482b; color: #f2d49d; }
-.geonodes-shell { display: grid; grid-template-columns: 235px minmax(0, 1fr) 235px; min-height: calc(100vh - 120px); background: #26332f; }
-.geonodes-shell .node-palette, .node-inspector { background: #202c29; color: #dfe8e5; padding: 16px; }
-.geonodes-shell .node-palette { border-color: #344641; }
+.save-state.unsaved { background: #4a412f; color: #f2d49d; }
+.save-state.saving { background: #2f4658; color: #bde3ff; }
+.save-state.saving i { animation: pulse-dot 1s infinite; }
+.save-state.error { background: #5a302b; color: #ffb5aa; }
+.save-state.saved { background: #30413d; color: #b9cbc5; }
+@keyframes pulse-dot {
+  50% { opacity: .45; transform: scale(.78); }
+}
+.geonodes-shell { display: grid; grid-template-columns: 235px minmax(0, 1fr) 320px; height: calc(100vh - 120px); min-height: 0; overflow: hidden; background: #26332f; transition: grid-template-columns .18s ease; }
+.geonodes-shell.left-collapsed { grid-template-columns: 42px minmax(0, 1fr) 320px; }
+.geonodes-shell.right-collapsed { grid-template-columns: 235px minmax(0, 1fr) 42px; }
+.geonodes-shell.left-collapsed.right-collapsed { grid-template-columns: 42px minmax(0, 1fr) 42px; }
+.geonodes-shell .node-palette, .node-inspector { display: flex; min-height: 0; flex-direction: column; background: #1c2825; color: #dfe8e5; padding: 14px; }
+.geonodes-shell .node-palette { position: relative; overflow: hidden; border-color: #344641; }
+.sidebar-content { min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
+.left-collapsed .node-palette, .right-collapsed .node-inspector { padding: 9px 7px; }
+.left-collapsed .node-palette .sidebar-content, .right-collapsed .node-inspector .sidebar-content { display: none; }
+.collapse-tab { position: sticky; top: 0; z-index: 7; display: grid; width: 100%; min-height: 32px; place-items: center; border: 1px solid #40554e; background: #293a35; padding: 7px 5px; color: #dce8e4; font-size: 11px; }
+.collapse-tab:hover { background: #344740; }
+.collapse-tab.left, .collapse-tab.right { margin-bottom: 10px; }
+.panel-head { display: grid; gap: 4px; margin-bottom: 14px; }
+.panel-head .eyebrow { margin-bottom: 0; color: #91a49e; }
+.panel-head h3 { color: #f1f7f5; font-size: 18px; }
+.panel-head span { color: #93a69f; font-size: 11px; line-height: 1.45; }
+.sidebar-card { display: grid; gap: 10px; margin-bottom: 12px; border: 1px solid #334842; border-radius: 12px; background: #23312d; padding: 12px; }
+.sidebar-card > b { color: #edf5f2; font-size: 11px; letter-spacing: .03em; }
 .geonodes-shell .card-description { color: #9eafaa; }
 .geonodes-shell .palette-item { border-color: #3a4a46; background: #2b3935; color: #eef4f2; }
 .geonodes-shell .palette-item:hover { border-color: #708c83; background: #344540; }
@@ -210,10 +234,15 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weig
 .geonodes-shell .palette-item:active { cursor: grabbing; }
 .palette-tip { display: grid; gap: 3px; margin: 14px 0 16px; border: 1px solid #48615a; border-radius: 8px; background: #293a35; padding: 10px; color: #d7e4df; font-size: 11px; }
 .palette-tip span { color: #a7bab4; font-size: 10px; }
+.template-button { width: 100%; margin-top: 14px; border: 1px solid rgba(215,255,95,.28); background: rgba(215,255,95,.09); color: var(--accent); text-align: left; }
+.template-button:hover { background: rgba(215,255,95,.16); }
+.template-grid { display: grid; grid-template-columns: 1fr; gap: 7px; margin-top: 12px; }
+.template-grid .template-button { margin-top: 0; padding: 9px 10px; font-size: 11px; }
+.node-search { margin-top: 0; border-color: #435852; background: #172520; color: #eef4f2; padding: 9px 10px; font-size: 12px; }
 .flow-recipe { display: grid; gap: 4px; border-left: 3px solid var(--accent); padding: 5px 0 5px 9px; color: #dce8e4; font-size: 11px; }
 .flow-recipe span { color: var(--accent); font-family: monospace; font-size: 10px; }
 .flow-recipe small { color: #91a49e; font-size: 10px; line-height: 1.4; }
-.palette-section { margin: 17px 1px 6px; color: #849790; font-size: 9px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
+.palette-section { margin: 18px 1px 7px; color: #849790; font-size: 9px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
 .advanced-toggle { width: 100%; margin-top: 18px; border: 1px solid #475d56; background: #293a35; color: #c8d8d3; text-align: left; }
 .advanced-toggle:hover { background: #344740; }
 .advanced-palette { margin-top: 10px; border-top: 1px solid #3d514b; padding-top: 10px; }
@@ -226,21 +255,80 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weig
 .socket-legend i.records { background: #d7ff5f; }
 .socket-legend i.value { background: #e8bd5c; }
 .socket-legend small { color: #91a49e; }
-.geonodes-shell .node-canvas { position: relative; min-height: calc(100vh - 120px); background: #26332f; }
+.geonodes-shell .node-canvas { position: relative; min-height: 0; background: #26332f; overscroll-behavior: contain; }
 .node-canvas.drop-ready { outline: 3px solid rgba(215,255,95,.5); outline-offset: -5px; }
 .drop-hint { position: absolute; z-index: 5; inset: 18px; display: grid; place-items: center; border: 2px dashed rgba(215,255,95,.7); border-radius: 10px; background: rgba(29,41,38,.42); color: #d7ff5f; font-size: 15px; pointer-events: none; }
 .canvas-guide { position: absolute; z-index: 4; top: 14px; left: 14px; display: grid; gap: 3px; border: 1px solid #40544e; border-radius: 8px; background: rgba(29,41,38,.86); padding: 9px 11px; color: #dce7e3; font-size: 11px; pointer-events: none; }
 .canvas-guide span { color: #9eb0aa; font-size: 10px; }
-.node-inspector { border-left: 1px solid #344641; }
+.quick-strip { position: absolute; z-index: 4; top: 14px; right: 14px; display: flex; max-width: calc(100% - 340px); align-items: center; gap: 6px; overflow-x: auto; border: 1px solid #40544e; border-radius: 9px; background: rgba(29,41,38,.86); padding: 8px; color: #dce7e3; }
+.quick-strip b { margin: 0 4px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.quick-strip button { background: #344740; padding: 6px 9px; color: #dce7e3; font-size: 10px; }
+.quick-strip button:hover { background: #40564f; }
+.flow-status { position: absolute; z-index: 4; right: 14px; bottom: 14px; display: grid; gap: 3px; max-width: 300px; border: 1px solid #40544e; border-radius: 10px; background: rgba(29,41,38,.88); padding: 10px 12px; color: #dce7e3; font-size: 11px; pointer-events: none; }
+.flow-status span { color: #a9bbb6; font-size: 10px; line-height: 1.4; }
+.flow-status.live { border-color: rgba(215,255,95,.45); box-shadow: 0 0 0 3px rgba(215,255,95,.08); }
+.flow-status.live b { color: var(--accent); }
+.flow-status.error { border-color: rgba(225,102,82,.45); }
+.flow-status.error b { color: #f0a091; }
+.flow-status.idle b { color: #dce7e3; }
+.node-inspector { position: relative; overflow: hidden; border-left: 1px solid #344641; }
 .node-inspector > small { display: block; margin: 6px 0 20px; color: #91a39e; font-family: monospace; }
 .node-inspector label { margin-top: 14px; color: #9eafaa; }
-.node-inspector input { border-color: #465b55; background: #2b3935; color: #eef4f2; }
+.node-inspector input, .node-inspector select { border-color: #465b55; background: #2b3935; color: #eef4f2; }
+.inspector-help { display: grid; gap: 6px; margin-top: 14px; border: 1px solid #435852; border-radius: 9px; background: #293a35; padding: 11px; color: #dce8e4; font-size: 11px; line-height: 1.45; }
+.inspector-help span { color: var(--accent); font-family: monospace; font-size: 10px; }
+.validation-card { display: grid; gap: 6px; margin-bottom: 12px; border: 1px solid #40554e; border-radius: 12px; background: #24322e; padding: 11px; color: #dce8e4; font-size: 11px; }
+.validation-card b { font-size: 12px; }
+.validation-card span { color: #9fb2ac; line-height: 1.4; }
+.validation-card.live { border-color: rgba(215,255,95,.35); background: rgba(215,255,95,.08); }
+.validation-card.live b { color: var(--accent); }
+.validation-card.error { border-color: rgba(225,102,82,.42); background: rgba(180,71,56,.12); }
+.validation-card.error b { color: #f0a091; }
+.help-popover { margin-top: 12px; border: 1px solid #3d514b; border-radius: 9px; background: #24322e; padding: 9px 10px; color: #aebfba; font-size: 11px; }
+.help-popover summary, .code-popover summary { cursor: pointer; color: #edf5f2; font-weight: 800; }
+.help-popover p { margin: 9px 0 7px; line-height: 1.45; }
+.help-popover code { color: var(--accent); font-size: 10px; }
+.code-popover { margin-top: 8px; border: 1px solid #3d514b; border-radius: 9px; background: #1f2d29; padding: 9px 10px; color: #aebfba; font-size: 11px; }
+.code-popover pre { margin-top: 9px; border: 1px solid #344a43; background: #111d19; color: #d7ff8b; font-size: 10px; white-space: pre-wrap; }
+.property-panel { display: grid; gap: 11px; margin-top: 16px; border: 1px solid #3b514b; border-radius: 10px; background: #1f2d29; padding: 12px; }
+.property-panel > b { color: #edf5f2; font-size: 11px; letter-spacing: .04em; }
+.property-panel label { margin-top: 0; }
+.property-panel textarea { min-height: 120px; border-color: #536660; background: #16231f; padding: 10px; color: #d7ff8b; font-size: 11px; line-height: 1.45; }
+.property-panel .field-error textarea { border-color: #e16652; box-shadow: 0 0 0 3px rgba(225,102,82,.12); }
+.property-panel .field-error small { color: #ffb5aa; font-size: 10px; line-height: 1.45; }
 .inspector-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 20px 0; }
 .inspector-meta span { border: 1px solid #3b4d48; border-radius: 8px; padding: 9px; color: #9eafaa; font-size: 11px; }
 .inspector-meta b { display: block; margin-top: 3px; color: #eef4f2; font-size: 16px; }
 .node-inspector .danger-button { width: 100%; }
-.inspector-empty { border: 1px dashed #465b55; border-radius: 9px; padding: 18px; color: #9eafaa; font-size: 12px; line-height: 1.6; }
+.inspector-empty { display: grid; gap: 8px; border: 1px dashed #465b55; border-radius: 12px; padding: 18px; color: #9eafaa; font-size: 12px; line-height: 1.6; }
+.inspector-empty b { color: #eef4f2; }
+.inspector-empty p { margin: 0; }
+.inspector-empty code { color: var(--accent); }
 .inspector-notice { margin-top: 20px; border-top: 1px solid #344641; padding-top: 14px; color: #bdcbc7; font-size: 11px; line-height: 1.5; }
+.api-console { display: grid; gap: 12px; margin-top: 18px; border: 1px solid #3d514b; border-radius: 13px; background: linear-gradient(180deg, #263631, #1c2925); padding: 13px; box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 12px 28px rgba(0,0,0,.16); }
+.console-title { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.console-title .eyebrow { margin-bottom: 4px; color: #9bb0a9; }
+.console-title h3 { color: #f0f7f4; font-size: 16px; letter-spacing: -.03em; }
+.console-status { border: 1px solid rgba(215,255,95,.25); border-radius: 999px; background: rgba(215,255,95,.1); padding: 5px 8px; color: var(--accent); font-size: 10px; font-weight: 900; }
+.console-status.error { border-color: rgba(225,102,82,.34); background: rgba(225,102,82,.12); color: #ffb5aa; }
+.console-status.live { border-color: rgba(215,255,95,.35); background: rgba(215,255,95,.14); color: var(--accent); }
+.request-line { display: flex; min-width: 0; align-items: center; gap: 8px; border: 1px solid #4a625b; border-radius: 10px; background: #14211d; padding: 8px; }
+.request-line code { min-width: 0; overflow: hidden; color: #d9f0e8; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.method-pill { flex: 0 0 auto; border-radius: 7px; background: #457e94; padding: 6px 8px; color: #fff; font-size: 10px; font-weight: 900; letter-spacing: .05em; }
+.method-pill.post { background: #2d8067; }
+.method-pill.patch { background: #a27431; }
+.method-pill.delete { background: #b44738; }
+.preview-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.preview-actions.three { grid-template-columns: 1fr 1fr 1fr; }
+.preview-actions button { padding: 9px 10px; font-size: 11px; }
+.console-hint { border-left: 3px solid #4f6961; padding-left: 9px; color: #9fb3ad; font-size: 10px; line-height: 1.5; }
+.console-hint.error { border-color: #e16652; color: #ffb5aa; }
+.console-block { display: grid; gap: 7px; }
+.console-block-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #eef6f3; font-size: 11px; }
+.console-block-title span { border-radius: 999px; background: #30423d; padding: 3px 7px; color: #aebfba; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
+.console-block pre { max-height: 210px; border: 1px solid #3b514b; background: #111d19; color: #d7ff8b; font-size: 10px; white-space: pre-wrap; }
+.next-steps { display: grid; gap: 5px; margin-top: 14px; border: 1px solid #3d514b; border-radius: 10px; background: #24322e; padding: 11px; color: #dce8e4; font-size: 11px; }
+.next-steps span { color: #9fb2ac; line-height: 1.45; }
 .geo-node { min-width: 205px; overflow: hidden; border: 1px solid #101816; border-radius: 7px; background: #34423e; color: #e6efec; box-shadow: 0 9px 20px rgba(0,0,0,.22); }
 .geo-node { cursor: grab; }
 .geo-node:active { cursor: grabbing; }
@@ -252,6 +340,7 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weig
 .geo-node.request .geo-node-header { background: #457e94; }
 .geo-node-header span { font-size: 8px; font-weight: 900; letter-spacing: .14em; opacity: .75; text-transform: uppercase; }
 .geo-node-header strong { font-size: 12px; }
+.geo-node-header em { justify-self: start; border-radius: 999px; background: rgba(215,255,95,.16); padding: 3px 7px; color: var(--accent); font-size: 9px; font-style: normal; font-weight: 900; }
 .geo-node-body { padding: 10px 0 5px; }
 .geo-node-body > small { display: block; padding: 0 11px 9px; color: #b9c8c3; font-size: 10px; }
 .socket-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -267,7 +356,11 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weig
 .node-config label { display: grid; grid-template-columns: 62px minmax(0, 1fr); align-items: center; gap: 6px; color: #b8c8c3; font-size: 9px; }
 .node-config input { min-width: 0; border-color: #536660; border-radius: 5px; background: #2b3935; padding: 5px 6px; color: #eef5f2; font-size: 10px; }
 .node-config select { min-width: 0; border-color: #536660; border-radius: 5px; background: #2b3935; padding: 5px 4px; color: #eef5f2; font-size: 10px; }
-.geonodes-shell .react-flow__edge-path { stroke: #d7ff5f !important; stroke-width: 2 !important; }
+.geonodes-shell .react-flow__edge-path { stroke: #78968b !important; stroke-width: 2 !important; transition: stroke .18s, stroke-width .18s, opacity .18s; }
+.geonodes-shell .edge-idle .react-flow__edge-path { stroke: #78968b !important; opacity: .82; }
+.geonodes-shell .edge-live .react-flow__edge-path { stroke: #d7ff5f !important; stroke-width: 3 !important; filter: drop-shadow(0 0 5px rgba(215,255,95,.55)); }
+.geonodes-shell .edge-warning .react-flow__edge-path { stroke: #d9a654 !important; stroke-dasharray: 8 6; }
+.geonodes-shell .edge-invalid .react-flow__edge-path { stroke: #e16652 !important; stroke-width: 3 !important; stroke-dasharray: 4 5; filter: drop-shadow(0 0 4px rgba(225,102,82,.45)); }
 .geonodes-shell .react-flow__controls button { background: #34423e; fill: #dbe7e3; }
 .geonodes-shell .react-flow__minimap { background: #1d2926; }
 .geonodes-shell .flow-json { background: #26332f; color: #eef4f2; }
@@ -275,3 +368,6 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weig
   .geonodes-shell { grid-template-columns: 190px minmax(0, 1fr); }
   .node-inspector { display: none; }
 }
+.inspector-section { border: 1px solid #334842; border-radius: 12px; background: #23312d; padding: 12px; }
+.inspector-section.output-selected { border-color: rgba(215,255,95,.35); box-shadow: 0 0 0 3px rgba(215,255,95,.08); }
+.inspector-section > small { display: block; margin-top: 5px; color: #91a49e; font-family: monospace; font-size: 10px; }

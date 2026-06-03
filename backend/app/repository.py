@@ -1,4 +1,5 @@
 import re
+from functools import cmp_to_key
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,6 +19,10 @@ class ConflictError(Exception):
 
 
 class RecordValidationError(Exception):
+    pass
+
+
+class FlowExecutionError(Exception):
     pass
 
 
@@ -328,3 +333,116 @@ def save_flow(key: str, graph: dict[str, Any]) -> dict[str, Any]:
             (uuid4(), key, Jsonb(graph)),
         )
     return graph
+
+
+def node_config(graph: dict[str, Any], kind: str) -> dict[str, Any]:
+    for node in graph.get("nodes", []):
+        data = node.get("data", {})
+        if data.get("kind") == kind:
+            return data.get("config", {})
+    return {}
+
+
+def graph_has_node(graph: dict[str, Any], kind: str) -> bool:
+    return any(node.get("data", {}).get("kind") == kind for node in graph.get("nodes", []))
+
+
+def compare_values(left: Any, operator: str, right: str) -> bool:
+    if isinstance(left, bool):
+        parsed_right: Any = right.lower() == "true"
+    elif isinstance(left, (int, float)):
+        try:
+            parsed_right = float(right)
+        except ValueError:
+            parsed_right = right
+    else:
+        parsed_right = right
+    if operator == "=":
+        return left == parsed_right
+    if operator == "!=":
+        return left != parsed_right
+    try:
+        if operator == ">":
+            return left > parsed_right
+        if operator == ">=":
+            return left >= parsed_right
+        if operator == "<":
+            return left < parsed_right
+        if operator == "<=":
+            return left <= parsed_right
+    except TypeError:
+        return False
+    return False
+
+
+def apply_flow_transforms(graph: dict[str, Any], records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output = records
+    if graph_has_node(graph, "filter"):
+        config = node_config(graph, "filter")
+        field = config.get("field")
+        operator = config.get("operator", "=")
+        value = str(config.get("value", ""))
+        output = [
+            record
+            for record in output
+            if field in record and compare_values(record[field], operator, value)
+        ]
+    if graph_has_node(graph, "sort"):
+        config = node_config(graph, "sort")
+        field = config.get("field")
+        reverse = config.get("direction", "desc") == "desc"
+        output = sorted(
+            output,
+            key=cmp_to_key(
+                lambda a, b: (str(a.get(field, "")) > str(b.get(field, "")))
+                - (str(a.get(field, "")) < str(b.get(field, "")))
+            ),
+            reverse=reverse,
+        )
+    if graph_has_node(graph, "select"):
+        fields = [
+            field.strip()
+            for field in node_config(graph, "select").get("fields", "").split(",")
+            if field.strip()
+        ]
+        if fields:
+            output = [{field: record[field] for field in fields if field in record} for record in output]
+    if graph_has_node(graph, "limit"):
+        count = int(node_config(graph, "limit").get("count", "10"))
+        output = output[:count]
+    if graph_has_node(graph, "paginate"):
+        size = int(node_config(graph, "paginate").get("size", "20"))
+        output = output[:size]
+    return output
+
+
+def execute_flow(key: str, method: str, payload: dict[str, Any] | None = None, record_id: UUID | None = None) -> tuple[dict[str, Any] | list[dict[str, Any]], int]:
+    graph = get_flow(key)
+    if not graph.get("nodes"):
+        raise NotFoundError("Flow topilmadi yoki bo'sh.")
+    request_config = node_config(graph, "request")
+    expected_method = request_config.get("method", "GET")
+    if method != expected_method:
+        raise FlowExecutionError(f"Flow {expected_method} kutyapti, lekin {method} keldi.")
+    resource_config = node_config(graph, "resource")
+    project = resource_config.get("project")
+    resource = resource_config.get("resource")
+    if not project or not resource:
+        raise FlowExecutionError("Resource node ichida project va resource kerak.")
+    status = int(node_config(graph, "response").get("status", "200"))
+    if method == "GET":
+        records = list_records(project, resource)
+        return apply_flow_transforms(graph, records), status
+    if method == "POST":
+        return create_record(project, resource, payload or {}), status
+    if method == "PATCH":
+        record_id = record_id or (UUID(request_config["recordId"]) if request_config.get("recordId") else None)
+        if not record_id:
+            raise FlowExecutionError("PATCH uchun record id kerak.")
+        return update_record(project, resource, record_id, payload or {}), status
+    if method == "DELETE":
+        record_id = record_id or (UUID(request_config["recordId"]) if request_config.get("recordId") else None)
+        if not record_id:
+            raise FlowExecutionError("DELETE uchun record id kerak.")
+        return delete_record(project, resource, record_id), status
+    raise FlowExecutionError("Bu method qo'llab-quvvatlanmaydi.")

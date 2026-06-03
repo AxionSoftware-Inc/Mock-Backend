@@ -1,15 +1,18 @@
 from contextlib import asynccontextmanager
+import json
 from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .config import FRONTEND_ORIGIN
 from .database import close_pool, open_pool
 from .repository import (
     ConflictError,
+    FlowExecutionError,
     NotFoundError,
     RecordValidationError,
     create_project,
@@ -18,6 +21,7 @@ from .repository import (
     delete_project,
     delete_resource,
     delete_record,
+    execute_flow,
     get_project,
     get_flow,
     get_record,
@@ -46,6 +50,14 @@ app.add_middleware(
 )
 
 
+def clean_json_response(body: Any, status: int) -> Response:
+    return Response(
+        content=json.dumps(jsonable_encoder(body), ensure_ascii=False, indent=2),
+        media_type="application/json",
+        status_code=status,
+    )
+
+
 @app.exception_handler(NotFoundError)
 async def not_found_handler(_, error: NotFoundError):
     return JSONResponse(status_code=404, content={"detail": str(error)})
@@ -58,6 +70,11 @@ async def conflict_handler(_, error: ConflictError):
 
 @app.exception_handler(RecordValidationError)
 async def validation_handler(_, error: RecordValidationError):
+    return JSONResponse(status_code=400, content={"detail": str(error)})
+
+
+@app.exception_handler(FlowExecutionError)
+async def flow_execution_handler(_, error: FlowExecutionError):
     return JSONResponse(status_code=400, content={"detail": str(error)})
 
 
@@ -74,6 +91,31 @@ def flows_retrieve(key: str):
 @app.put("/api/flows/{key}")
 def flows_update(key: str, payload: FlowSave):
     return save_flow(key, payload.model_dump())
+
+
+@app.get("/api/node-flows/{key}")
+def node_flows_get(key: str):
+    body, status = execute_flow(key, "GET")
+    return clean_json_response(body, status)
+
+
+@app.post("/api/node-flows/{key}")
+def node_flows_post(key: str, payload: dict[str, Any]):
+    body, status = execute_flow(key, "POST", payload)
+    return clean_json_response(body, status)
+
+
+@app.patch("/api/node-flows/{key}")
+def node_flows_patch(key: str, payload: dict[str, Any]):
+    record_id = payload.pop("id", None)
+    body, status = execute_flow(key, "PATCH", payload, UUID(record_id) if record_id else None)
+    return clean_json_response(body, status)
+
+
+@app.delete("/api/node-flows/{key}")
+def node_flows_delete(key: str, record_id: UUID | None = None):
+    body, status = execute_flow(key, "DELETE", record_id=record_id)
+    return clean_json_response(body, status)
 
 
 @app.get("/api/projects")
