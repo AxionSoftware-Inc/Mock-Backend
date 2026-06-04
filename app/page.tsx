@@ -22,7 +22,6 @@ export default function Home() {
         <nav>
           <Link className="nav-active" href="/">Projects</Link>
           <Link href="/create">Yangi API</Link>
-          <Link href="/nodes">Node lab</Link>
         </nav>
       </header>
       <section className="dashboard-hero">

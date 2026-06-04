@@ -10,6 +10,47 @@ const starterFields: MockField[] = [
   { name: "body", type: "string", required: false },
 ];
 
+const templates: { label: string; name: string; resource: string; fields: MockField[] }[] = [
+  {
+    label: "Blog",
+    name: "Blog API",
+    resource: "posts",
+    fields: starterFields,
+  },
+  {
+    label: "Cars",
+    name: "Cars API",
+    resource: "cars",
+    fields: [
+      { name: "brand", type: "string", required: true },
+      { name: "model", type: "string", required: true },
+      { name: "year", type: "number", required: false },
+      { name: "available", type: "boolean", required: false },
+    ],
+  },
+  {
+    label: "Products",
+    name: "Products API",
+    resource: "products",
+    fields: [
+      { name: "name", type: "string", required: true },
+      { name: "price", type: "number", required: true },
+      { name: "inStock", type: "boolean", required: false },
+    ],
+  },
+  {
+    label: "Students",
+    name: "Students API",
+    resource: "students",
+    fields: [
+      { name: "name", type: "string", required: true },
+      { name: "course", type: "string", required: false },
+      { name: "score", type: "number", required: false },
+      { name: "active", type: "boolean", required: false },
+    ],
+  },
+];
+
 export default function CreateProjectPage() {
   const router = useRouter();
   const [name, setName] = useState("Blog API");
@@ -17,6 +58,13 @@ export default function CreateProjectPage() {
   const [fields, setFields] = useState(starterFields);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  function applyTemplate(template: (typeof templates)[number]) {
+    setName(template.name);
+    setResource(template.resource);
+    setFields(template.fields);
+    setMessage(`${template.label} template tanlandi.`);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,12 +90,23 @@ export default function CreateProjectPage() {
     <main>
       <header className="topbar">
         <Link className="brand" href="/">mockbase</Link>
-        <nav><Link href="/">Projects</Link><Link className="nav-active" href="/create">Yangi API</Link><Link href="/nodes">Node lab</Link></nav>
+        <nav><Link href="/">Projects</Link><Link className="nav-active" href="/create">Yangi API</Link></nav>
       </header>
       <section className="create-hero compact-hero">
-        <p className="eyebrow">NEW PROJECT</p>
-        <h1>Backend asosini yarating.</h1>
-        <p>Project nomi va birinchi resource’ni kiriting. Keyingi resource va recordlarni workspace ichida boshqarasiz.</p>
+        <div>
+          <p className="eyebrow">NEW PROJECT</p>
+          <h1>Backend asosini yarating.</h1>
+          <p>Project nomi va birinchi resource’ni kiriting. Keyingi resource va recordlarni workspace ichida boshqarasiz.</p>
+        </div>
+        <div className="create-preview-card">
+          <span>CRUD</span>
+          <b>GET · POST · PATCH · DELETE</b>
+          <code>/{resource}</code>
+        </div>
+      </section>
+      <section className="template-strip">
+        <div><p className="eyebrow">TEMPLATES</p><h3>Tez boshlash</h3></div>
+        <div className="template-pills">{templates.map((template) => <button className="secondary" type="button" key={template.label} onClick={() => applyTemplate(template)}>{template.label}</button>)}</div>
       </section>
       <form className="card create-form elevated" onSubmit={submit}>
         <div className="card-title">

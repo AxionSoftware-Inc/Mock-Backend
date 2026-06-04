@@ -45,8 +45,9 @@ export const nodeCatalog: NodeSpec[] = [
     inputs: [],
     outputs: [socket("request", "Request", "request")],
     config: [
-      { key: "method", label: "Method", defaultValue: "GET", options: ["GET", "POST"] },
+      { key: "method", label: "Method", defaultValue: "GET", options: ["GET", "POST", "PATCH", "DELETE"] },
       { key: "path", label: "Path", defaultValue: "/posts" },
+      { key: "recordId", label: "Record ID", defaultValue: "" },
       { key: "body", label: "JSON body", defaultValue: "{\n  \"title\": \"New post\",\n  \"published\": true\n}" },
     ],
   },
@@ -110,10 +111,10 @@ export const nodeCatalog: NodeSpec[] = [
     category: "Output",
     beginner: true,
     summary: "Flow natijasini JSON response sifatida qaytaradi.",
-    example: "200 OK",
+    example: "Runtime status",
     inputs: [socket("records", "Body", "records")],
     outputs: [],
-    config: [{ key: "status", label: "Status", defaultValue: "200", options: ["200", "201"] }],
+    config: [],
   },
   {
     kind: "select",

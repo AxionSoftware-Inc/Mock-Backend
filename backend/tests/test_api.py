@@ -124,6 +124,7 @@ def test_project_resource_management(client: TestClient):
         valid_schema = client.patch(
             f"/api/projects/{slug}/resources/comments",
             json={
+                "name": "reviews",
                 "fields": [
                     {"name": "body", "type": "string", "required": True},
                     {"name": "approved", "type": "boolean", "required": True},
@@ -131,15 +132,20 @@ def test_project_resource_management(client: TestClient):
             },
         )
         assert valid_schema.status_code == 200
+        assert valid_schema.json()["name"] == "reviews"
+        assert client.get(f"/api/mock/{slug}/comments").status_code == 404
+        renamed_records = client.get(f"/api/mock/{slug}/reviews")
+        assert renamed_records.status_code == 200
+        assert renamed_records.json()[0]["body"] == "Useful"
 
         detail = client.get(f"/api/projects/{slug}")
         assert detail.status_code == 200
         assert {item["name"] for item in detail.json()["resources"]} == {
             "posts",
-            "comments",
+            "reviews",
         }
 
-        assert client.delete(f"/api/projects/{slug}/resources/comments").status_code == 204
+        assert client.delete(f"/api/projects/{slug}/resources/reviews").status_code == 204
         assert client.delete(f"/api/projects/{slug}").status_code == 204
         assert client.get(f"/api/projects/{slug}").status_code == 404
     finally:
@@ -186,9 +192,13 @@ def test_node_flow_executes_against_real_records(client: TestClient):
                 {"id": "request", "data": {"kind": "request", "config": {"method": "GET", "path": "/posts"}}},
                 {"id": "resource", "data": {"kind": "resource", "config": {"project": slug, "resource": "posts"}}},
                 {"id": "filter", "data": {"kind": "filter", "config": {"field": "published", "operator": "=", "value": "true"}}},
-                {"id": "response", "data": {"kind": "response", "config": {"status": "200"}}},
+                {"id": "response", "data": {"kind": "response", "config": {}}},
             ],
-            "edges": [],
+            "edges": [
+                {"id": "e1", "source": "request", "sourceHandle": "request", "target": "resource", "targetHandle": "request"},
+                {"id": "e2", "source": "resource", "sourceHandle": "records", "target": "filter", "targetHandle": "records"},
+                {"id": "e3", "source": "filter", "sourceHandle": "records", "target": "response", "targetHandle": "records"},
+            ],
         }
         assert client.put(f"/api/flows/{key}", json=graph).status_code == 200
 
@@ -218,9 +228,12 @@ def test_node_flow_post_creates_real_record(client: TestClient):
             "nodes": [
                 {"id": "request", "data": {"kind": "request", "config": {"method": "POST", "path": "/posts"}}},
                 {"id": "resource", "data": {"kind": "resource", "config": {"project": slug, "resource": "posts"}}},
-                {"id": "response", "data": {"kind": "response", "config": {"status": "201"}}},
+                {"id": "response", "data": {"kind": "response", "config": {}}},
             ],
-            "edges": [],
+            "edges": [
+                {"id": "e1", "source": "request", "sourceHandle": "request", "target": "resource", "targetHandle": "request"},
+                {"id": "e2", "source": "resource", "sourceHandle": "records", "target": "response", "targetHandle": "records"},
+            ],
         }
         client.put(f"/api/flows/{key}", json=graph)
 
@@ -228,6 +241,41 @@ def test_node_flow_post_creates_real_record(client: TestClient):
         assert response.status_code == 201
         assert response.json()["title"] == "Created by flow"
         assert client.get(f"/api/mock/{slug}/posts").json()[0]["title"] == "Created by flow"
+    finally:
+        with pool.connection() as connection:
+            connection.execute("DELETE FROM flows WHERE key = %s", (key,))
+            connection.execute("DELETE FROM projects WHERE slug = %s", (slug,))
+
+
+def test_node_flow_requires_connected_response(client: TestClient):
+    slug = f"node-disconnected-{uuid4().hex}"
+    key = f"flow-{uuid4().hex}"
+    try:
+        client.post(
+            "/api/projects",
+            json={
+                "name": "Node Flow Disconnected",
+                "slug": slug,
+                "resource": "posts",
+                "fields": [{"name": "title", "type": "string", "required": True}],
+            },
+        )
+        client.post(f"/api/mock/{slug}/posts", json={"title": "Should not leak"})
+        graph = {
+            "nodes": [
+                {"id": "request", "data": {"kind": "request", "config": {"method": "GET", "path": "/posts"}}},
+                {"id": "resource", "data": {"kind": "resource", "config": {"project": slug, "resource": "posts"}}},
+                {"id": "response", "data": {"kind": "response", "config": {}}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "request", "sourceHandle": "request", "target": "resource", "targetHandle": "request"},
+            ],
+        }
+        client.put(f"/api/flows/{key}", json=graph)
+
+        response = client.get(f"/api/node-flows/{key}")
+        assert response.status_code == 400
+        assert "JSON Response" in response.json()["detail"]
     finally:
         with pool.connection() as connection:
             connection.execute("DELETE FROM flows WHERE key = %s", (key,))
@@ -263,9 +311,12 @@ def test_node_flow_patch_and_delete_use_request_node_record_id(client: TestClien
                     },
                 },
                 {"id": "resource", "data": {"kind": "resource", "config": {"project": slug, "resource": "posts"}}},
-                {"id": "response", "data": {"kind": "response", "config": {"status": "200"}}},
+                {"id": "response", "data": {"kind": "response", "config": {}}},
             ],
-            "edges": [],
+            "edges": [
+                {"id": "e1", "source": "request", "sourceHandle": "request", "target": "resource", "targetHandle": "request"},
+                {"id": "e2", "source": "resource", "sourceHandle": "records", "target": "response", "targetHandle": "records"},
+            ],
         }
         client.put(f"/api/flows/{key}", json=patch_graph)
         patched = client.patch(f"/api/node-flows/{key}", json={"title": "After", "published": True})
@@ -290,6 +341,50 @@ def test_node_flow_patch_and_delete_use_request_node_record_id(client: TestClien
         deleted = client.delete(f"/api/node-flows/{key}")
         assert deleted.status_code == 200
         assert client.get(f"/api/mock/{slug}/posts").json() == []
+    finally:
+        with pool.connection() as connection:
+            connection.execute("DELETE FROM flows WHERE key = %s", (key,))
+            connection.execute("DELETE FROM projects WHERE slug = %s", (slug,))
+
+
+def test_node_flow_can_execute_matching_method_group(client: TestClient):
+    slug = f"node-multi-{uuid4().hex}"
+    key = f"flow-{uuid4().hex}"
+    try:
+        client.post(
+            "/api/projects",
+            json={
+                "name": "Node Flow Multi Group",
+                "slug": slug,
+                "resource": "posts",
+                "fields": [{"name": "title", "type": "string", "required": True}],
+            },
+        )
+        client.post(f"/api/mock/{slug}/posts", json={"title": "Existing"})
+        graph = {
+            "nodes": [
+                {"id": "posts-get-request", "data": {"kind": "request", "group": "posts-get", "config": {"method": "GET", "path": "/posts"}}},
+                {"id": "posts-resource", "data": {"kind": "resource", "config": {"project": slug, "resource": "posts"}}},
+                {"id": "posts-get-response", "data": {"kind": "response", "group": "posts-get", "config": {}}},
+                {"id": "posts-post-request", "data": {"kind": "request", "group": "posts-post", "config": {"method": "POST", "path": "/posts"}}},
+                {"id": "posts-post-response", "data": {"kind": "response", "group": "posts-post", "config": {}}},
+            ],
+            "edges": [
+                {"id": "get-e1", "source": "posts-get-request", "sourceHandle": "request", "target": "posts-resource", "targetHandle": "request", "data": {"group": "posts-get"}},
+                {"id": "get-e2", "source": "posts-resource", "sourceHandle": "records", "target": "posts-get-response", "targetHandle": "records", "data": {"group": "posts-get"}},
+                {"id": "post-e1", "source": "posts-post-request", "sourceHandle": "request", "target": "posts-resource", "targetHandle": "request", "data": {"group": "posts-post"}},
+                {"id": "post-e2", "source": "posts-resource", "sourceHandle": "records", "target": "posts-post-response", "targetHandle": "records", "data": {"group": "posts-post"}},
+            ],
+        }
+        client.put(f"/api/flows/{key}", json=graph)
+
+        read = client.get(f"/api/node-flows/{key}")
+        assert read.status_code == 200
+        assert [item["title"] for item in read.json()] == ["Existing"]
+
+        created = client.post(f"/api/node-flows/{key}", json={"title": "Created from POST group"})
+        assert created.status_code == 201
+        assert created.json()["title"] == "Created from POST group"
     finally:
         with pool.connection() as connection:
             connection.execute("DELETE FROM flows WHERE key = %s", (key,))

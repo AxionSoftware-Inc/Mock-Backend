@@ -75,18 +75,15 @@ def get_project(slug: str) -> dict[str, Any]:
         resources = connection.execute(
             """
             SELECT r.id, r.name, r.created_at AS "createdAt",
-              count(DISTINCT rec.id)::int AS "recordCount",
-              COALESCE(
-                json_agg(json_build_object(
+              (SELECT count(*)::int FROM records rec WHERE rec.resource_id = r.id) AS "recordCount",
+              COALESCE((
+                SELECT json_agg(json_build_object(
                   'name', f.name, 'type', f.type, 'required', f.required
-                ) ORDER BY f.position) FILTER (WHERE f.id IS NOT NULL),
-                '[]'
-              ) AS fields
+                ) ORDER BY f.position)
+                FROM fields f WHERE f.resource_id = r.id
+              ), '[]') AS fields
             FROM resources r
-            LEFT JOIN fields f ON f.resource_id = r.id
-            LEFT JOIN records rec ON rec.resource_id = r.id
             WHERE r.project_id = %s
-            GROUP BY r.id
             ORDER BY r.created_at
             """,
             (project["id"],),
@@ -162,16 +159,27 @@ def create_resource(slug: str, payload: ResourceCreate) -> dict[str, Any]:
 def update_resource(slug: str, resource: str, payload: ResourceUpdate) -> dict[str, Any]:
     found = find_resource(slug, resource)
     fields = [field.model_dump() for field in payload.fields]
+    next_resource = slugify(payload.name) if payload.name else resource
+    if not next_resource:
+        raise RecordValidationError("Resource nomi kerak.")
     with pool.connection() as connection:
         records = connection.execute(
             "SELECT data FROM records WHERE resource_id = %s", (found["id"],)
         ).fetchall()
         for record in records:
             validate_record(fields, record["data"])
-        with connection.transaction():
-            connection.execute("DELETE FROM fields WHERE resource_id = %s", (found["id"],))
-            replace_fields(connection, found["id"], payload.fields)
-    return find_resource(slug, resource)
+        try:
+            with connection.transaction():
+                if next_resource != resource:
+                    connection.execute(
+                        "UPDATE resources SET name = %s WHERE id = %s",
+                        (next_resource, found["id"]),
+                    )
+                connection.execute("DELETE FROM fields WHERE resource_id = %s", (found["id"],))
+                replace_fields(connection, found["id"], payload.fields)
+        except errors.UniqueViolation as error:
+            raise_conflict(error)
+    return find_resource(slug, next_resource)
 
 
 def delete_resource(slug: str, resource: str) -> None:
@@ -335,8 +343,10 @@ def save_flow(key: str, graph: dict[str, Any]) -> dict[str, Any]:
     return graph
 
 
-def node_config(graph: dict[str, Any], kind: str) -> dict[str, Any]:
+def node_config(graph: dict[str, Any], kind: str, active_ids: set[str] | None = None) -> dict[str, Any]:
     for node in graph.get("nodes", []):
+        if active_ids is not None and node.get("id") not in active_ids:
+            continue
         data = node.get("data", {})
         if data.get("kind") == kind:
             return data.get("config", {})
@@ -345,6 +355,144 @@ def node_config(graph: dict[str, Any], kind: str) -> dict[str, Any]:
 
 def graph_has_node(graph: dict[str, Any], kind: str) -> bool:
     return any(node.get("data", {}).get("kind") == kind for node in graph.get("nodes", []))
+
+
+def node_id(graph: dict[str, Any], kind: str, method: str | None = None) -> str | None:
+    for node in graph.get("nodes", []):
+        data = node.get("data", {})
+        if data.get("kind") != kind:
+            continue
+        if method and data.get("config", {}).get("method", "GET") != method:
+            continue
+        return node.get("id")
+    return None
+
+
+def node_by_id(graph: dict[str, Any], node_id_value: str | None) -> dict[str, Any] | None:
+    for node in graph.get("nodes", []):
+        if node.get("id") == node_id_value:
+            return node
+    return None
+
+
+def config_by_id(graph: dict[str, Any], node_id_value: str | None) -> dict[str, Any]:
+    node = node_by_id(graph, node_id_value)
+    return node.get("data", {}).get("config", {}) if node else {}
+
+
+def edge_group(edge: dict[str, Any]) -> str | None:
+    data = edge.get("data")
+    return data.get("group") if isinstance(data, dict) else None
+
+
+def node_group(graph: dict[str, Any], node_id_value: str | None) -> str | None:
+    node = node_by_id(graph, node_id_value)
+    data = node.get("data", {}) if node else {}
+    group = data.get("group")
+    return group if isinstance(group, str) else None
+
+
+def reachable_response_id(graph: dict[str, Any], resource_id: str, group: str | None = None) -> tuple[str | None, set[str]]:
+    adjacency: dict[str, list[str]] = {}
+    for edge in graph.get("edges", []):
+        if edge.get("sourceHandle") == "records" and edge.get("targetHandle") == "records":
+            if group and edge_group(edge) not in (group, None):
+                continue
+            adjacency.setdefault(edge["source"], []).append(edge["target"])
+
+    seen = {resource_id}
+    stack = [resource_id]
+    while stack:
+        current = stack.pop()
+        current_node = node_by_id(graph, current)
+        if current_node and current_node.get("data", {}).get("kind") == "response":
+            if group and node_group(graph, current) not in (group, None):
+                continue
+            return current, seen
+        for target in adjacency.get(current, []):
+            if target not in seen:
+                seen.add(target)
+                stack.append(target)
+    return None, seen
+
+
+def runtime_group(graph: dict[str, Any], method: str) -> tuple[str, str, str, set[str]]:
+    for request_id in [
+        node.get("id")
+        for node in graph.get("nodes", [])
+        if node.get("data", {}).get("kind") == "request"
+        and node.get("data", {}).get("config", {}).get("method", "GET") == method
+    ]:
+        group = node_group(graph, request_id)
+        resource_id = None
+        for edge in graph.get("edges", []):
+            if (
+                edge.get("source") == request_id
+                and edge.get("sourceHandle") == "request"
+                and edge.get("targetHandle") == "request"
+                and (not group or edge_group(edge) in (group, None))
+            ):
+                target = node_by_id(graph, edge.get("target"))
+                if target and target.get("data", {}).get("kind") == "resource":
+                    resource_id = edge.get("target")
+                    break
+        if not resource_id:
+            continue
+        response_id, active_ids = reachable_response_id(graph, resource_id, group)
+        if response_id:
+            active_ids.add(request_id)
+            return request_id, resource_id, response_id, active_ids
+    raise FlowExecutionError(f"{method} uchun ulangan Request -> Resource -> JSON Response group topilmadi.")
+
+
+def node_id_legacy(graph: dict[str, Any], kind: str) -> str | None:
+    for node in graph.get("nodes", []):
+        if node.get("data", {}).get("kind") == kind:
+            return node.get("id")
+    return None
+
+
+def connected_flow_ids(graph: dict[str, Any]) -> set[str]:
+    request_id = node_id_legacy(graph, "request")
+    resource_id = node_id_legacy(graph, "resource")
+    response_id = node_id_legacy(graph, "response")
+    if not request_id or not resource_id or not response_id:
+        raise FlowExecutionError("Request, Resource va JSON Response node'lari kerak.")
+
+    edges = graph.get("edges", [])
+    request_connected = any(
+        edge.get("source") == request_id
+        and edge.get("target") == resource_id
+        and edge.get("sourceHandle") == "request"
+        and edge.get("targetHandle") == "request"
+        for edge in edges
+    )
+    if not request_connected:
+        raise FlowExecutionError("HTTP Request node Resource node'ga ulanmagan.")
+
+    adjacency: dict[str, list[str]] = {}
+    for edge in edges:
+        if edge.get("sourceHandle") == "records" and edge.get("targetHandle") == "records":
+            adjacency.setdefault(edge["source"], []).append(edge["target"])
+
+    seen = {resource_id}
+    stack = [resource_id]
+    while stack:
+        current = stack.pop()
+        for target in adjacency.get(current, []):
+            if target not in seen:
+                seen.add(target)
+                stack.append(target)
+    if response_id not in seen:
+        raise FlowExecutionError("Flow JSON Response node bilan tugashi kerak.")
+    return seen
+
+
+def graph_has_active_node(graph: dict[str, Any], active_ids: set[str], kind: str) -> bool:
+    return any(
+        node.get("id") in active_ids and node.get("data", {}).get("kind") == kind
+        for node in graph.get("nodes", [])
+    )
 
 
 def compare_values(left: Any, operator: str, right: str) -> bool:
@@ -375,10 +523,10 @@ def compare_values(left: Any, operator: str, right: str) -> bool:
     return False
 
 
-def apply_flow_transforms(graph: dict[str, Any], records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def apply_flow_transforms(graph: dict[str, Any], records: list[dict[str, Any]], active_ids: set[str]) -> list[dict[str, Any]]:
     output = records
-    if graph_has_node(graph, "filter"):
-        config = node_config(graph, "filter")
+    if graph_has_active_node(graph, active_ids, "filter"):
+        config = node_config(graph, "filter", active_ids)
         field = config.get("field")
         operator = config.get("operator", "=")
         value = str(config.get("value", ""))
@@ -387,8 +535,8 @@ def apply_flow_transforms(graph: dict[str, Any], records: list[dict[str, Any]]) 
             for record in output
             if field in record and compare_values(record[field], operator, value)
         ]
-    if graph_has_node(graph, "sort"):
-        config = node_config(graph, "sort")
+    if graph_has_active_node(graph, active_ids, "sort"):
+        config = node_config(graph, "sort", active_ids)
         field = config.get("field")
         reverse = config.get("direction", "desc") == "desc"
         output = sorted(
@@ -399,19 +547,19 @@ def apply_flow_transforms(graph: dict[str, Any], records: list[dict[str, Any]]) 
             ),
             reverse=reverse,
         )
-    if graph_has_node(graph, "select"):
+    if graph_has_active_node(graph, active_ids, "select"):
         fields = [
             field.strip()
-            for field in node_config(graph, "select").get("fields", "").split(",")
+            for field in node_config(graph, "select", active_ids).get("fields", "").split(",")
             if field.strip()
         ]
         if fields:
             output = [{field: record[field] for field in fields if field in record} for record in output]
-    if graph_has_node(graph, "limit"):
-        count = int(node_config(graph, "limit").get("count", "10"))
+    if graph_has_active_node(graph, active_ids, "limit"):
+        count = int(node_config(graph, "limit", active_ids).get("count", "10"))
         output = output[:count]
-    if graph_has_node(graph, "paginate"):
-        size = int(node_config(graph, "paginate").get("size", "20"))
+    if graph_has_active_node(graph, active_ids, "paginate"):
+        size = int(node_config(graph, "paginate", active_ids).get("size", "20"))
         output = output[:size]
     return output
 
@@ -420,29 +568,34 @@ def execute_flow(key: str, method: str, payload: dict[str, Any] | None = None, r
     graph = get_flow(key)
     if not graph.get("nodes"):
         raise NotFoundError("Flow topilmadi yoki bo'sh.")
-    request_config = node_config(graph, "request")
-    expected_method = request_config.get("method", "GET")
-    if method != expected_method:
-        raise FlowExecutionError(f"Flow {expected_method} kutyapti, lekin {method} keldi.")
-    resource_config = node_config(graph, "resource")
+    try:
+        request_id, resource_id, _, active_ids = runtime_group(graph, method)
+        request_config = config_by_id(graph, request_id)
+        resource_config = config_by_id(graph, resource_id)
+    except FlowExecutionError:
+        request_config = node_config(graph, "request")
+        expected_method = request_config.get("method", "GET")
+        if method != expected_method:
+            raise FlowExecutionError(f"Flow {expected_method} kutyapti, lekin {method} keldi.")
+        active_ids = connected_flow_ids(graph)
+        resource_config = node_config(graph, "resource")
     project = resource_config.get("project")
     resource = resource_config.get("resource")
     if not project or not resource:
         raise FlowExecutionError("Resource node ichida project va resource kerak.")
-    status = int(node_config(graph, "response").get("status", "200"))
     if method == "GET":
         records = list_records(project, resource)
-        return apply_flow_transforms(graph, records), status
+        return apply_flow_transforms(graph, records, active_ids), 200
     if method == "POST":
-        return create_record(project, resource, payload or {}), status
+        return create_record(project, resource, payload or {}), 201
     if method == "PATCH":
         record_id = record_id or (UUID(request_config["recordId"]) if request_config.get("recordId") else None)
         if not record_id:
             raise FlowExecutionError("PATCH uchun record id kerak.")
-        return update_record(project, resource, record_id, payload or {}), status
+        return update_record(project, resource, record_id, payload or {}), 200
     if method == "DELETE":
         record_id = record_id or (UUID(request_config["recordId"]) if request_config.get("recordId") else None)
         if not record_id:
             raise FlowExecutionError("DELETE uchun record id kerak.")
-        return delete_record(project, resource, record_id), status
+        return delete_record(project, resource, record_id), 200
     raise FlowExecutionError("Bu method qo'llab-quvvatlanmaydi.")

@@ -52,6 +52,7 @@ class ResourceCreate(BaseModel):
 class ResourceUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    name: str | None = Field(default=None, min_length=1, max_length=120)
     fields: list[MockField] = Field(min_length=1, max_length=50)
 
     @field_validator("fields")
