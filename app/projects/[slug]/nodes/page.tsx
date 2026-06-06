@@ -5,102 +5,15 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addEdge, Background, BackgroundVariant, Controls, Handle, MiniMap, PanOnScrollMode, Position, ReactFlow, useEdgesState, useNodesState, useReactFlow, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, type ReactFlowInstance } from "@xyflow/react";
 import { nodeCatalog, nodeSpec, type NodeKind, type NodeSpec } from "@/lib/node-catalog";
-import { flowNode, isGeoFlow, projectFlowKey, projectResourceGetFlow, projectToCrudFlow, sampleBody, type FlowData, type FlowSnapshot } from "@/lib/backend-projection";
+import { isGeoFlow, projectFlowKey, projectResourceGetFlow, projectToCrudFlow, sampleBody, type FlowData, type FlowSnapshot } from "@/lib/backend-projection";
+import { apiPreview, createConfiguredFlowNode, createFlowNode, edgeIsValid, flowSavePayload, flowStatus, nodeCode, parseFields, requestBody, requestBodyError, responseStatusLabel, type RunState } from "@/lib/node-system";
 import type { ApiRecord, MockProject, MockResource } from "@/lib/types";
 import "@xyflow/react/dist/style.css";
 
-type RunState = { ok: boolean; status: number; method: string; message: string } | null;
 type SaveStatus = "saved" | "unsaved" | "saving" | "error";
-
-const configValue = (nodes: Node<FlowData>[], kind: NodeKind, key: string, fallback: string) => {
-  return nodes.find((item) => item.data.kind === kind)?.data.config[key] || fallback;
-};
-const apiPreview = (nodes: Node<FlowData>[]) => {
-  const method = configValue(nodes, "request", "method", "GET");
-  const path = configValue(nodes, "request", "path", "/posts");
-  const resource = configValue(nodes, "resource", "resource", "posts");
-  const status = configValue(nodes, "response", "status", "200");
-  const filter = nodes.find((item) => item.data.kind === "filter")?.data.config;
-  const sort = nodes.find((item) => item.data.kind === "sort")?.data.config;
-  const pageSize = configValue(nodes, "paginate", "size", "20");
-  return { method, path, resource, status, filter, sort, pageSize };
-};
-const requestBody = (nodes: Node<FlowData>[]) => {
-  const config = nodes.find((item) => item.data.kind === "request")?.data.config || {};
-  try {
-    const body = JSON.parse(config.body || "{}");
-    return body;
-  } catch {
-    return {};
-  }
-};
-const requestBodyError = (nodes: Node<FlowData>[]) => {
-  const config = nodes.find((item) => item.data.kind === "request")?.data.config || {};
-  const method = config.method || "GET";
-  if (method === "GET" || method === "DELETE" || !config.body?.trim()) return null;
-  try {
-    JSON.parse(config.body);
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : "JSON noto‘g‘ri yozilgan.";
-  }
-};
-const responseStatusLabel = (status: RunState) => {
-  if (!status) return "Runtime";
-  return `${status.status} ${status.ok ? "OK" : "ERR"}`;
-};
-const nodeCode = (item: Node<FlowData>) => {
-  const config = item.data.config;
-  if (item.data.kind === "request") return [`${config.method} ${config.path}`, config.method !== "GET" ? `body = ${config.body}` : null].filter(Boolean).join("\n");
-  if (item.data.kind === "resource") return `records = db.project("${config.project}").resource("${config.resource}").findMany()`;
-  if (item.data.kind === "filter") return `records = records.filter(row => row.${config.field} ${config.operator} ${JSON.stringify(config.value)})`;
-  if (item.data.kind === "sort") return `records = records.sortBy("${config.field}", "${config.direction}")`;
-  if (item.data.kind === "paginate") return `records = paginate(records, { pageSize: ${config.size} })`;
-  if (item.data.kind === "response") return "return json(records, { status: runtime.status })";
-  if (item.data.kind === "select") return `records = select(records, [${JSON.stringify(config.fields)}])`;
-  if (item.data.kind === "limit") return `records = records.slice(0, ${config.count})`;
-  if (item.data.kind === "delay") return `await sleep(${config.milliseconds})`;
-  if (item.data.kind === "randomError") return `if (random() < ${config.chance}%) return error(${config.status})`;
-  return JSON.stringify(config, null, 2);
-};
-const socketKind = (nodes: Node<FlowData>[], nodeId: string | null | undefined, handleId: string | null | undefined, side: "inputs" | "outputs") => {
-  return nodes.find((item) => item.id === nodeId)?.data[side].find((socket) => socket.id === handleId)?.type;
-};
-const edgeIsValid = (nodes: Node<FlowData>[], edge: Edge) => {
-  const sourceType = socketKind(nodes, edge.source, edge.sourceHandle, "outputs");
-  const targetType = socketKind(nodes, edge.target, edge.targetHandle, "inputs");
-  return Boolean(sourceType && targetType && sourceType === targetType);
-};
-const flowIssues = (nodes: Node<FlowData>[], edges: Edge[]) => {
-  const issues: string[] = [];
-  const request = nodes.find((item) => item.data.kind === "request");
-  const resource = nodes.find((item) => item.data.kind === "resource");
-  const response = nodes.find((item) => item.data.kind === "response");
-  if (!request) issues.push("HTTP Request node kerak.");
-  if (!resource) issues.push("Read Resource node kerak.");
-  if (!response) issues.push("JSON Response node kerak.");
-  if (request && !request.data.config.path?.startsWith("/")) issues.push("Endpoint path '/' bilan boshlanishi kerak.");
-  if (resource && !resource.data.config.resource?.trim()) issues.push("Resource nomi bo‘sh bo‘lmasin.");
-  if (resource && resource.data.config.project === "demo") issues.push("Resource node'da project slug'ni haqiqiy project slugga almashtiring.");
-  if (edges.some((edge) => !edgeIsValid(nodes, edge))) issues.push("Mos kelmaydigan socket ulanishi bor.");
-  const connected = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
-  if (request && !connected.has(request.id)) issues.push("Request node hali oqimga ulanmagan.");
-  if (response && !connected.has(response.id)) issues.push("Response node hali oqimga ulanmagan.");
-  if (response && !edges.some((edge) => edge.target === response.id && edge.targetHandle === "records")) issues.push("Flow oxiri JSON Response node'ga ulanishi kerak.");
-  return issues;
-};
-const flowStatus = (nodes: Node<FlowData>[], edges: Edge[], runState: RunState) => {
-  const issues = flowIssues(nodes, edges);
-  if (issues.length) return { tone: "error", label: "Needs attention", issues };
-  if (runState?.ok) return { tone: "live", label: "Flow responded", issues: [`${runState.method} ${runState.status}: real backend ishladi.`] };
-  if (runState && !runState.ok) return { tone: "error", label: "Request failed", issues: [`${runState.method} ${runState.status}: ${runState.message}`] };
-  return { tone: "idle", label: "Ready to test", issues: ["Flow to‘liq. Send yoki Open in tab bilan sinab ko‘ring."] };
-};
-
-const node = (id: string, kind: NodeKind, x: number, y: number): Node<FlowData> => flowNode(id, kind, x, y);
-const configuredNode = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, string>) => {
-  return flowNode(id, kind, x, y, config);
-};
+type BackendIssue = { code: string; severity: "error" | "warning"; nodeId?: string; message: string; fix?: string };
+const node = createFlowNode;
+const configuredNode = createConfiguredFlowNode;
 const getPostsNodes = [node("request-template", "request", 70, 190), configuredNode("resource-template", "resource", 360, 190, { project: "node-demo" }), node("response-template", "response", 650, 190)];
 const getPostsEdges: Edge[] = [{ id: "template-e1", source: "request-template", sourceHandle: "request", target: "resource-template", targetHandle: "request" }, { id: "template-e2", source: "resource-template", sourceHandle: "records", target: "response-template", targetHandle: "records" }];
 const filteredPostsNodes = [node("request-filtered", "request", 40, 180), configuredNode("resource-filtered", "resource", 290, 180, { project: "node-demo" }), node("filter-filtered", "filter", 540, 180), node("response-filtered", "response", 790, 180)];
@@ -146,6 +59,7 @@ export default function NodesPage() {
   const [previewResult, setPreviewResult] = useState<string | null>(null);
   const [sendingPreview, setSendingPreview] = useState(false);
   const [runState, setRunState] = useState<RunState>(null);
+  const [backendIssues, setBackendIssues] = useState<BackendIssue[]>([]);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [draggingKind, setDraggingKind] = useState<NodeKind | null>(null);
@@ -164,12 +78,14 @@ export default function NodesPage() {
   const selected = nodes.find((item) => item.id === selectedId);
   const activeResource = projectResources.find((resource) => resource.name === projectResource);
   const preview = apiPreview(nodes);
-  const endpoint = `/api/node-flows/${flowKey}`;
+  const endpointPath = preview.path.replace(/^\/+/, "");
+  const endpoint = `/api/node-flows/${flowKey}${endpointPath ? `/${endpointPath}` : ""}`;
   const isBodyMethod = preview.method !== "GET" && preview.method !== "DELETE";
   const bodyError = requestBodyError(nodes);
   const requestBlocker = bodyError ? "Request body JSON formatida emas." : null;
   const status = flowStatus(nodes, edges, runState);
-  const canSendPreview = status.tone !== "error" && !requestBlocker;
+  const backendBlocker = backendIssues.find((issue) => issue.severity === "error");
+  const canSendPreview = status.tone !== "error" && !requestBlocker && !backendBlocker;
   const saveLabel = saveStatus === "saving" ? "Saqlanmoqda" : saveStatus === "error" ? "Saqlanmadi" : saveStatus === "unsaved" ? "Auto-save kutmoqda" : "Auto-saved";
   const displayEdges = useMemo(() => edges.map((edge) => {
     const invalid = !edgeIsValid(nodes, edge);
@@ -187,7 +103,7 @@ export default function NodesPage() {
     const nextFlow = projectToCrudFlow(nextProject);
     setNodes(nextFlow.nodes);
     setEdges(nextFlow.edges);
-    await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextFlow) });
+    await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(flowSavePayload(nextFlow.nodes, nextFlow.edges, "node-projection")) });
     setDirty(false);
     setSaveStatus("saved");
     setNotice(message);
@@ -211,14 +127,39 @@ export default function NodesPage() {
     await refreshProjectProjection(`/${from} -> /${to} backendda ham yangilandi.`);
   }, [projectResources, refreshProjectProjection, slug]);
 
+  const updateResourceFieldsFromNode = useCallback(async (resourceName: string, fieldsJson: string) => {
+    const resource = projectResources.find((item) => item.name === resourceName);
+    if (!resource) return setNotice(`/${resourceName} resource topilmadi.`);
+    let fields;
+    try {
+      fields = parseFields(fieldsJson);
+    } catch (error) {
+      return setNotice(error instanceof Error ? error.message : "Fields JSON noto‘g‘ri.");
+    }
+    const response = await fetch(`/api/projects/${slug}/resources/${resourceName}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: resourceName, fields }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      return setNotice(data?.detail || "Fields backendga yozilmadi.");
+    }
+    await refreshProjectProjection(`/${resourceName} fields backendda yangilandi.`);
+  }, [projectResources, refreshProjectProjection, slug]);
+
   useEffect(() => {
     const markDirty = (event: Event) => {
       setDirty(true);
       setSaveStatus("unsaved");
       setRunState(null);
-      const detail = (event as CustomEvent).detail as { kind?: NodeKind; key?: string; value?: string; previous?: string } | undefined;
+      const detail = (event as CustomEvent).detail as { id?: string; kind?: NodeKind; key?: string; value?: string; previous?: string } | undefined;
       if (detail?.kind === "resource" && detail.key === "resource") {
         void renameResourceFromNode(detail.previous || "", detail.value || "");
+      }
+      if (detail?.kind === "resource" && detail.key === "fields") {
+        const resourceName = nodes.find((item) => item.id === detail.id)?.data.config.resource || "";
+        void updateResourceFieldsFromNode(resourceName, detail.value || "");
       }
       if (detail?.kind === "request" && detail.key === "path") {
         const nextResource = (detail.value || "").replace(/^\/+/, "");
@@ -228,7 +169,7 @@ export default function NodesPage() {
     };
     window.addEventListener("mockbase-flow-dirty", markDirty);
     return () => window.removeEventListener("mockbase-flow-dirty", markDirty);
-  }, [renameResourceFromNode]);
+  }, [nodes, renameResourceFromNode, updateResourceFieldsFromNode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,7 +184,7 @@ export default function NodesPage() {
       setNodes(starter.nodes);
       setEdges(starter.edges);
       if (project) {
-        await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(starter) });
+        await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(flowSavePayload(starter.nodes, starter.edges, "node-projection")) });
       }
       setNotice("Backend CRUD projection node ko‘rinishda tayyorlandi.");
       setSaveStatus("saved");
@@ -256,16 +197,24 @@ export default function NodesPage() {
     };
   }, [flowKey, setEdges, setNodes, slug]);
 
+  const validateCurrentFlow = useCallback(async () => {
+    const response = await fetch(`/api/flows/${flowKey}/validate`);
+    if (!response.ok) return;
+    const data = await response.json() as { issues: BackendIssue[] };
+    setBackendIssues(data.issues || []);
+  }, [flowKey]);
+
   useEffect(() => {
     if (!dirty) return;
     const timer = window.setTimeout(async () => {
       setSaveStatus("saving");
-      const response = await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodes, edges }) });
+      const response = await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(flowSavePayload(nodes, edges)) });
       setDirty(!response.ok);
       setSaveStatus(response.ok ? "saved" : "error");
+      if (response.ok) await validateCurrentFlow();
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [dirty, nodes, edges, flowKey]);
+  }, [dirty, nodes, edges, flowKey, validateCurrentFlow]);
 
   function remember() {
     setPast((current) => [...current.slice(-24), { nodes, edges }]);
@@ -342,7 +291,7 @@ export default function NodesPage() {
   async function buildTemplate(nextNodes: Node<FlowData>[], nextEdges: Edge[], selectedNode: string, message: string) {
     try {
       replaceFlow(nextNodes, nextEdges, selectedNode, `${message} Project: ${slug}.`);
-      const saved = await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodes: nextNodes, edges: nextEdges }) });
+      const saved = await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(flowSavePayload(nextNodes, nextEdges, "template")) });
       setDirty(!saved.ok);
       setSaveStatus(saved.ok ? "saved" : "error");
       if (saved.ok && apiPreview(nextNodes).method === "GET") await runSavedFlow(nextNodes);
@@ -382,7 +331,7 @@ export default function NodesPage() {
   }
   async function load() { const response = await fetch(`/api/flows/${flowKey}`); const graph = await response.json(); if (!graph.nodes.length || !isGeoFlow(graph)) return setNotice("Saqlangan geo-flow topilmadi. Starter flow bilan davom eting."); setNodes(graph.nodes); setEdges(graph.edges); setSelectedId(null); setDirty(false); setSaveStatus("saved"); setNotice("Saqlangan flow yuklandi."); }
   async function persistCurrentFlow() {
-    const response = await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodes, edges }) });
+    const response = await fetch(`/api/flows/${flowKey}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(flowSavePayload(nodes, edges)) });
     setDirty(!response.ok);
     setSaveStatus(response.ok ? "saved" : "error");
     return response.ok;
@@ -432,12 +381,12 @@ export default function NodesPage() {
       .map((item) => <button className={`palette-item ${item.kind}`} draggable key={item.kind} onDragEnd={() => setDraggingKind(null)} onDragStart={(event) => onPaletteDragStart(event, item.kind)} onClick={() => addNode(item)}><span>{item.title[0]}</span><div><b>{item.title}</b><small>{item.summary}</small></div><i>⋮⋮</i></button>);
   }
   return <main className="nodes-page">
-    <header className="topbar"><Link className="brand" href="/">mockbase</Link><nav><Link href="/">Projects</Link><Link href={`/projects/${slug}`}>Workspace</Link><Link className="nav-active" href={`/projects/${slug}/nodes`}>Nodes</Link></nav></header>
+    <header className="topbar"><Link className="brand" href="/">mockbase</Link><nav><Link href="/projects">Projects</Link><Link href={`/projects/${slug}`}>Workspace</Link><Link className="nav-active" href={`/projects/${slug}/nodes`}>Nodes</Link></nav></header>
     <section className="nodes-toolbar"><div><span className="editor-dot" /> <b>{projectName}</b><small>{flowKey}</small><span className={`save-state ${saveStatus}`}><i />{saveLabel}</span></div><div className="header-actions"><Link className="secondary link-button" href={`/projects/${slug}`}>Table view</Link><button className="secondary" onClick={undo} disabled={!past.length}>Undo</button><button className="secondary" onClick={redo} disabled={!future.length}>Redo</button><button className="secondary" onClick={() => setLeftCollapsed(!leftCollapsed)}>{leftCollapsed ? "Show nodes" : "Hide nodes"}</button><button className="secondary" onClick={() => setRightCollapsed(!rightCollapsed)}>{rightCollapsed ? "Show inspector" : "Hide inspector"}</button><button className="secondary" onClick={load}>Load</button><button className="secondary" onClick={reset}>Reset</button><button className="secondary" onClick={() => setShowJson(!showJson)}>{showJson ? "Canvas" : "JSON"}</button></div></section>
     <div className={`geonodes-shell ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}>
       <aside className="node-palette"><button className="collapse-tab left" onClick={() => setLeftCollapsed(!leftCollapsed)}>{leftCollapsed ? "Nodes" : "‹"}</button><div className="sidebar-content"><div className="panel-head"><p className="eyebrow">BUILD</p><h3>Node library</h3><span>Bu projectdagi CRUD endpointlar node ko‘rinishida ochiladi.</span></div><div className="palette-section">Project endpoints</div><div className="resource-node-list">{projectResources.map((resource) => <button className={resource.name === projectResource ? "active" : ""} key={resource.id} onClick={() => switchResource(resource.name)}><b>/{resource.name}</b><span>{resource.recordCount} records · {resource.fields.length} fields</span></button>)}</div><div className="sidebar-card"><b>Search nodes</b><input className="node-search" value={nodeSearch} onChange={(event) => setNodeSearch(event.target.value)} placeholder="Request, resource, response..." /></div><div className="palette-section">Essential flow</div>{coreNodes()}<div className="socket-legend"><b>Socket ranglari</b><span><i className="request" /> Request</span><span><i className="records" /> Records</span><span><i className="value" /> Value</span><small>Har flow oxiri JSON Response node’ga ulanadi.</small></div><button className="advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>{showAdvanced ? "− More nodes" : "+ More nodes"}</button>{showAdvanced && <div className="advanced-palette"><small>Keyinroq kerak bo‘ladigan node’lar</small>{paletteNodes("Transform")}{paletteNodes("Advanced")}</div>}</div></aside>
       <section className={`node-canvas ${draggingKind ? "drop-ready" : ""}`} onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>{draggingKind && <div className="drop-hint">Bu yerga tashlang: <b>{nodeSpec(draggingKind).title}</b></div>}{!showJson && <div className="quick-strip"><b>CRUD</b><button onClick={buildGetPostsTemplate}>GET /{projectResource}</button><button onClick={buildCreateTemplate}>POST</button><button onClick={buildUpdateTemplate}>PATCH</button><button onClick={buildDeleteTemplate}>DELETE</button><button onClick={buildFilteredTemplate}>Filter</button>{(["request", "resource", "response"] as NodeKind[]).map((kind) => <button key={kind} onClick={() => addNode(nodeSpec(kind))}>{nodeSpec(kind).title}</button>)}</div>}{!showJson && !loadingFlow && <div className={`flow-status ${status.tone}`}><b>{status.label}</b><span>{status.issues[0]}</span></div>}{loadingFlow ? <div className="flow-loading">Project node editor yuklanmoqda...</div> : showJson ? <div className="flow-json"><div className="card-title"><div><p className="eyebrow">FLOW DSL</p><h3>JSON graph</h3></div><span className="count-badge">{nodes.length} nodes</span></div><pre>{JSON.stringify({ nodes, edges }, null, 2)}</pre></div> : <ReactFlow nodes={nodes} edges={displayEdges} nodeTypes={nodeTypes} onInit={setFlowInstance} onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange} onConnect={onConnect} isValidConnection={isValidConnection} onNodeClick={(_, item) => setSelectedId(item.id)} onPaneClick={() => setSelectedId(null)} defaultEdgeOptions={{ animated: false }} fitView preventScrolling zoomOnScroll={false} panOnScroll panOnScrollMode={PanOnScrollMode.Free} panOnScrollSpeed={0.9} zoomOnPinch zoomOnDoubleClick minZoom={0.25} maxZoom={2.5} nodesDraggable nodeDragThreshold={0} panOnDrag={[1, 2]}><Background variant={BackgroundVariant.Dots} gap={18} size={1} /><Controls /><MiniMap pannable zoomable /></ReactFlow>}</section>
-      <aside className="node-inspector"><button className="collapse-tab right" onClick={() => setRightCollapsed(!rightCollapsed)}>{rightCollapsed ? "Inspector" : "›"}</button><div className="sidebar-content"><div className="panel-head"><p className="eyebrow">INSPECT</p><h3>Output & status</h3><span>Flow JSON Response node bilan tugaydi.</span></div><div className={`validation-card ${requestBlocker ? "error" : status.tone}`}><b>{requestBlocker ? "Request tayyor emas" : status.label}</b>{requestBlocker ? <span>{requestBlocker}</span> : status.issues.map((issue) => <span key={issue}>{issue}</span>)}</div>{selected ? <><div className={`inspector-section ${selected.data.kind === "response" ? "output-selected" : ""}`}><h3>{selected.data.title}</h3><small>{selected.id}</small><details className="help-popover"><summary>Bu node nima qiladi?</summary><p>{nodeSpec(selected.data.kind).summary}</p><code>{nodeSpec(selected.data.kind).example}</code></details><details className="code-popover"><summary>Code</summary><pre>{nodeCode(selected)}</pre></details><label>Node nomi<input value={selected.data.title} onChange={(event) => patchSelected({ title: event.target.value })} /></label><div className="property-panel"><b>Node properties</b>{nodeSpec(selected.data.kind).config.map((field) => <label className={field.key === "body" && bodyError ? "field-error" : ""} key={field.key}><span>{field.label}</span>{field.key === "body" ? <><textarea value={selected.data.config[field.key] || ""} onChange={(event) => patchSelectedConfig(field.key, event.target.value)} />{bodyError && <small>{bodyError}</small>}</> : field.options ? <select value={selected.data.config[field.key] || field.defaultValue} onChange={(event) => patchSelectedConfig(field.key, event.target.value)}>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : <input value={selected.data.config[field.key] || ""} onChange={(event) => patchSelectedConfig(field.key, event.target.value)} />}</label>)}</div><button className="danger-button" onClick={removeSelected}>Node’ni o‘chirish</button></div><div className="flow-preview api-console"><div className="console-title"><div><p className="eyebrow">REAL BACKEND</p><h3>Request console</h3></div><span className={`console-status ${runState?.ok ? "live" : runState ? "error" : ""}`}>{responseStatusLabel(runState)}</span></div><div className="request-line"><span className={`method-pill ${preview.method.toLowerCase()}`}>{preview.method}</span><code>{endpoint}</code></div><div className="preview-actions three"><button className="secondary" onClick={openPreviewTab} disabled={preview.method !== "GET"}>Open tab</button><button className="secondary" onClick={copyEndpoint}>Copy URL</button><button onClick={sendPreviewRequest} disabled={sendingPreview || !canSendPreview}>{sendingPreview ? "Sending..." : `Send ${preview.method}`}</button></div><div className={`console-hint ${requestBlocker ? "error" : ""}`}>{requestBlocker || (preview.method === "GET" ? "GET toza JSON array qaytaradi." : "POST yangi record yaratadi. Body JSON bo‘lishi kerak.")}</div>{isBodyMethod && <section className="console-block"><div className="console-block-title"><b>Request body</b><span>{bodyError ? "INVALID" : "JSON"}</span></div><pre>{bodyError ? "JSON tuzatilsa, parsed body shu yerda ko‘rinadi." : JSON.stringify(requestBody(nodes), null, 2)}</pre></section>}{previewResult && <section className="console-block"><div className="console-block-title"><b>Real backend response</b><span>{runState?.ok ? "LIVE" : "ERROR"}</span></div><pre>{previewResult}</pre></section>}</div></> : <div className="inspector-empty"><b>Status tayyor.</b><p>Node tanlanganda properties va request console shu yerda chiqadi.</p><span>O‘zgarishlar avtomatik saqlanadi.</span></div>}<div className="inspector-notice">{notice}</div></div></aside>
+      <aside className="node-inspector"><button className="collapse-tab right" onClick={() => setRightCollapsed(!rightCollapsed)}>{rightCollapsed ? "Inspector" : "›"}</button><div className="sidebar-content"><div className="panel-head"><p className="eyebrow">INSPECT</p><h3>Output & status</h3><span>Flow JSON Response node bilan tugaydi.</span></div><div className={`validation-card ${requestBlocker || backendBlocker ? "error" : status.tone}`}><b>{requestBlocker || backendBlocker ? "Request tayyor emas" : status.label}</b>{requestBlocker ? <span>{requestBlocker}</span> : backendIssues.length ? backendIssues.slice(0, 4).map((issue) => <span key={`${issue.code}-${issue.nodeId || issue.message}`}>{issue.severity.toUpperCase()}: {issue.message}{issue.fix ? ` ${issue.fix}` : ""}</span>) : status.issues.map((issue) => <span key={issue}>{issue}</span>)}</div>{selected ? <><div className={`inspector-section ${selected.data.kind === "response" ? "output-selected" : ""}`}><h3>{selected.data.title}</h3><small>{selected.id}</small><details className="help-popover"><summary>Bu node nima qiladi?</summary><p>{nodeSpec(selected.data.kind).summary}</p><code>{nodeSpec(selected.data.kind).example}</code></details><details className="code-popover"><summary>Code</summary><pre>{nodeCode(selected)}</pre></details><label>Node nomi<input value={selected.data.title} onChange={(event) => patchSelected({ title: event.target.value })} /></label><div className="property-panel"><b>Node properties</b>{nodeSpec(selected.data.kind).config.map((field) => <label className={field.key === "body" && bodyError ? "field-error" : ""} key={field.key}><span>{field.label}</span>{(field.key === "body" || field.key === "fields") ? <><textarea value={selected.data.config[field.key] || ""} onChange={(event) => patchSelectedConfig(field.key, event.target.value)} />{bodyError && <small>{bodyError}</small>}</> : field.options ? <select value={selected.data.config[field.key] || field.defaultValue} onChange={(event) => patchSelectedConfig(field.key, event.target.value)}>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : <input value={selected.data.config[field.key] || ""} onChange={(event) => patchSelectedConfig(field.key, event.target.value)} />}</label>)}</div><button className="danger-button" onClick={removeSelected}>Node’ni o‘chirish</button></div><div className="flow-preview api-console"><div className="console-title"><div><p className="eyebrow">REAL BACKEND</p><h3>Request console</h3></div><span className={`console-status ${runState?.ok ? "live" : runState ? "error" : ""}`}>{responseStatusLabel(runState)}</span></div><div className="request-line"><span className={`method-pill ${preview.method.toLowerCase()}`}>{preview.method}</span><code>{endpoint}</code></div><div className="preview-actions three"><button className="secondary" onClick={openPreviewTab} disabled={preview.method !== "GET"}>Open tab</button><button className="secondary" onClick={copyEndpoint}>Copy URL</button><button onClick={sendPreviewRequest} disabled={sendingPreview || !canSendPreview}>{sendingPreview ? "Sending..." : `Send ${preview.method}`}</button></div><div className={`console-hint ${requestBlocker || backendBlocker ? "error" : ""}`}>{requestBlocker || backendBlocker?.message || (preview.method === "GET" ? "GET toza JSON array qaytaradi." : "POST yangi record yaratadi. Body JSON bo‘lishi kerak.")}</div>{isBodyMethod && <section className="console-block"><div className="console-block-title"><b>Request body</b><span>{bodyError ? "INVALID" : "JSON"}</span></div><pre>{bodyError ? "JSON tuzatilsa, parsed body shu yerda ko‘rinadi." : JSON.stringify(requestBody(nodes), null, 2)}</pre></section>}{previewResult && <section className="console-block"><div className="console-block-title"><b>Real backend response</b><span>{runState?.ok ? "LIVE" : "ERROR"}</span></div><pre>{previewResult}</pre></section>}</div></> : <div className="inspector-empty"><b>Status tayyor.</b><p>Node tanlanganda properties va request console shu yerda chiqadi.</p><span>O‘zgarishlar avtomatik saqlanadi.</span></div>}<div className="inspector-notice">{notice}</div></div></aside>
     </div>
   </main>;
 }

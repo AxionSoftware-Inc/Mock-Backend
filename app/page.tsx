@@ -1,72 +1,51 @@
-"use client";
-
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import type { MockProjectSummary } from "@/lib/types";
 
-export default function Home() {
-  const [projects, setProjects] = useState<MockProjectSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/projects")
-      .then((response) => response.json())
-      .then(setProjects)
-      .finally(() => setLoading(false));
-  }, []);
-
+export default function LandingPage() {
   return (
     <main>
       <header className="topbar">
         <Link className="brand" href="/">mockbase</Link>
         <nav>
-          <Link className="nav-active" href="/">Projects</Link>
+          <Link href="/projects">Projects</Link>
           <Link href="/create">Yangi API</Link>
         </nav>
       </header>
-      <section className="dashboard-hero">
-        <div>
-          <p className="eyebrow">MOCK BACKEND WORKSPACE</p>
-          <h1>API projectlaringiz.</h1>
-          <p>Frontend uchun kerakli CRUD backendlarni yarating va bitta joydan boshqaring.</p>
+
+      <section className="landing-hero">
+        <div className="landing-copy">
+          <p className="eyebrow">VISUAL MOCK BACKEND</p>
+          <h1>Frontend uchun backendni daqiqalarda yig‘ing.</h1>
+          <p>
+            CRUD API, records, schema va node flow bitta real backend modelga ulanadi.
+            Hozir auth yo‘q, shuning uchun ishni boshlash projectlar workspace’iga olib kiradi.
+          </p>
+          <div className="landing-actions">
+            <Link className="hero-action" href="/projects">Ishni boshlash</Link>
+            <Link className="link-button secondary" href="/create">Yangi API yaratish</Link>
+          </div>
         </div>
-        <Link className="hero-action" href="/create">+ Yangi project</Link>
+        <div className="landing-preview">
+          <span>LIVE ENDPOINT</span>
+          <code>GET /api/mock/project/posts</code>
+          <pre>{`[
+  { "id": "...", "title": "Hello API" }
+]`}</pre>
+        </div>
       </section>
-      <section className="dashboard-section">
-        <div className="section-title">
-          <div>
-            <p className="eyebrow">PROJECTS</p>
-            <h2>Barcha API’lar</h2>
-          </div>
-          <span className="count-badge">{projects.length} project</span>
-        </div>
-        {loading ? (
-          <div className="card empty-state">Projectlar yuklanmoqda...</div>
-        ) : projects.length === 0 ? (
-          <div className="card empty-state">
-            <b>Hali project yo‘q.</b>
-            <p>Birinchi mock backend projectini yarating.</p>
-            <Link className="hero-action" href="/create">Project yaratish</Link>
-          </div>
-        ) : (
-          <div className="dashboard-grid">
-            {projects.map((project) => (
-              <Link className="dashboard-card" href={`/projects/${project.slug}`} key={project.id}>
-                <div className="card-title">
-                  <span className="project-mark">{project.name.slice(0, 1).toUpperCase()}</span>
-                  <span className="api-state ready">ACTIVE</span>
-                </div>
-                <h3>{project.name}</h3>
-                <code>{project.slug}.localhost:3000</code>
-                <div className="project-stats">
-                  <span><b>{project.resourceCount}</b> resources</span>
-                  <span><b>{project.recordCount}</b> records</span>
-                </div>
-                <span className="open-label">Workspace’ni ochish →</span>
-              </Link>
-            ))}
-          </div>
-        )}
+
+      <section className="landing-section">
+        <article className="card">
+          <b>Graphic CRUD</b>
+          <p>Resource, field va recordlarni oddiy workspace orqali boshqaring.</p>
+        </article>
+        <article className="card">
+          <b>Node Editor</b>
+          <p>Xuddi shu backendni node flow ko‘rinishida ochib, request oqimini qurish mumkin.</p>
+        </article>
+        <article className="card">
+          <b>Single Backend Model</b>
+          <p>Ikkala UI mustaqil, lekin bitta canonical backend modelga ulanadi.</p>
+        </article>
       </section>
     </main>
   );

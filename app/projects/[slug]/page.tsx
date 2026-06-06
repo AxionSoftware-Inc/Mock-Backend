@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { projectFlowKey, projectToCrudFlow } from "@/lib/backend-projection";
 import type { ApiRecord, FieldType, MockField, MockProject, MockResource } from "@/lib/types";
 
 const emptyFields: MockField[] = [{ name: "title", type: "string", required: true }];
@@ -80,6 +81,11 @@ export default function ProjectWorkspace() {
     return data as MockProject;
   }, [slug]);
 
+  const syncNodeProjection = useCallback(async (projectData?: MockProject) => {
+    const current = projectData || await loadProject();
+    await fetch(`/api/flows/${projectFlowKey(slug)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...projectToCrudFlow(current), metadata: { schemaVersion: 1, source: "workspace-projection" } }) });
+  }, [loadProject, slug]);
+
   const loadRecords = useCallback(async (resourceName: string) => {
     if (!resourceName) return;
     const response = await fetch(`/api/mock/${slug}/${resourceName}`);
@@ -149,6 +155,7 @@ export default function ProjectWorkspace() {
     if (!response.ok) return setNotice(data.detail || "Resource yaratilmadi.");
     await loadProject();
     activateResource(data);
+    await syncNodeProjection();
     setShowResourceForm(false);
     setNotice("Yangi resource qo‘shildi.");
   }
@@ -158,7 +165,8 @@ export default function ProjectWorkspace() {
     const response = await fetch(`/api/projects/${slug}/resources/${active.name}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: schemaFields }) });
     const data = await response.json();
     if (!response.ok) return setNotice(data.detail || "Schema saqlanmadi.");
-    await loadProject();
+    const refreshed = await loadProject();
+    await syncNodeProjection(refreshed);
     setEditingSchema(false);
     setNotice("Schema yangilandi.");
   }
@@ -167,6 +175,7 @@ export default function ProjectWorkspace() {
     if (!active || !confirm(`${active.name} resource va uning barcha recordlari o‘chirilsinmi?`)) return;
     await fetch(`/api/projects/${slug}/resources/${active.name}`, { method: "DELETE" });
     const refreshed = await loadProject();
+    await syncNodeProjection(refreshed);
     if (refreshed.resources[0]) activateResource(refreshed.resources[0]);
     else {
       setSelected("");
@@ -211,9 +220,9 @@ export default function ProjectWorkspace() {
   if (!project) return <main><div className="page-loading">{notice}</div></main>;
 
   return <main>
-    <header className="topbar"><Link className="brand" href="/">mockbase</Link><nav><Link href="/">Projects</Link><Link href="/create">Yangi API</Link><Link href={`/projects/${slug}`}>Workspace</Link><Link href={`/projects/${slug}/nodes`}>Nodes</Link></nav></header>
+    <header className="topbar"><Link className="brand" href="/">mockbase</Link><nav><Link href="/projects">Projects</Link><Link href="/create">Yangi API</Link><Link href={`/projects/${slug}`}>Workspace</Link><Link href={`/projects/${slug}/nodes`}>Nodes</Link></nav></header>
     <section className="workspace-header">
-      <div><Link className="back-link" href="/">← Projects</Link><p className="eyebrow">PROJECT WORKSPACE</p><h1>{project.name}</h1><code>{project.slug}.localhost:3000</code></div>
+      <div><Link className="back-link" href="/projects">← Projects</Link><p className="eyebrow">PROJECT WORKSPACE</p><h1>{project.name}</h1><code>{project.slug}.localhost:3000</code></div>
       <div className="header-actions"><Link className="secondary link-button" href={`/projects/${slug}/nodes`}>Open nodes</Link><button className="danger-button" onClick={removeProject}>Projectni o‘chirish</button></div>
     </section>
     <div className="app-shell">

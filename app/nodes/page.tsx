@@ -18,7 +18,7 @@ export default function NodesIndexPage() {
   return <main>
     <header className="topbar">
       <Link className="brand" href="/">mockbase</Link>
-      <nav><Link href="/">Projects</Link><Link href="/create">Yangi API</Link></nav>
+      <nav><Link href="/projects">Projects</Link><Link href="/create">Yangi API</Link></nav>
     </header>
     <section className="dashboard-hero">
       <div>

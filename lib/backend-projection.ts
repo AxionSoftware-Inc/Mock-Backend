@@ -17,6 +17,12 @@ export type FlowSnapshot = { nodes: Node<FlowData>[]; edges: Edge[] };
 export type CrudMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 const crudMethods: CrudMethod[] = ["GET", "POST", "PATCH", "DELETE"];
+const defaultContracts = {
+  GET: { status: 200, shape: "array" },
+  POST: { status: 201, shape: "object" },
+  PATCH: { status: 200, shape: "object" },
+  DELETE: { status: 200, shape: "object" },
+};
 
 export function projectFlowKey(slug: string) {
   return `project-${slug}-flow`;
@@ -80,10 +86,10 @@ export function resourceCrudHub(slug: string, resource: MockResource, x: number,
       "resource",
       x + 330,
       y + 260,
-      { project: slug, resource: resource.name },
+      { project: slug, resource: resource.name, fields: JSON.stringify(resource.fields, null, 2) },
       `${resource.name}-resource`,
     ),
-    flowNode(`${resource.name}-output`, "response", x + 700, y + 260),
+    flowNode(`${resource.name}-output`, "response", x + 700, y + 260, { path: `/${resource.name}`, contracts: JSON.stringify(defaultContracts, null, 2) }),
   ];
   const edges: Edge[] = [
     { id: `${resource.name}-output-e1`, source: `${resource.name}-resource`, sourceHandle: "records", target: `${resource.name}-output`, targetHandle: "records" },

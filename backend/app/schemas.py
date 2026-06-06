@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 FieldType = Literal["string", "number", "boolean"]
+ProjectAccess = Literal["public", "private"]
 
 
 class MockField(BaseModel):
@@ -25,6 +26,7 @@ class ProjectCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     slug: str | None = Field(default=None, max_length=120)
+    access: ProjectAccess = "public"
     resource: str = Field(min_length=1, max_length=120)
     fields: list[MockField] = Field(min_length=1, max_length=50)
 
@@ -66,3 +68,37 @@ class FlowSave(BaseModel):
 
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
+    layout: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    access: ProjectAccess
+
+
+class ApiMethod(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["GET", "POST", "PATCH", "DELETE"]
+    enabled: bool = True
+
+
+class ApiEndpoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    resource: str
+    fields: list[MockField]
+    methods: list[ApiMethod]
+    recordCount: int
+
+
+class ApiModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    name: str
+    access: ProjectAccess
+    endpoints: list[ApiEndpoint]

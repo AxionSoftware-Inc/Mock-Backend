@@ -63,6 +63,7 @@ export const nodeCatalog: NodeSpec[] = [
     config: [
       { key: "project", label: "Project slug", defaultValue: "demo" },
       { key: "resource", label: "Resource", defaultValue: "posts" },
+      { key: "fields", label: "Fields JSON", defaultValue: "[\n  { \"name\": \"title\", \"type\": \"string\", \"required\": true }\n]" },
     ],
   },
   {
@@ -114,7 +115,10 @@ export const nodeCatalog: NodeSpec[] = [
     example: "Runtime status",
     inputs: [socket("records", "Body", "records")],
     outputs: [],
-    config: [],
+    config: [
+      { key: "path", label: "Path", defaultValue: "/posts" },
+      { key: "contracts", label: "Method contracts", defaultValue: "{\n  \"GET\": { \"status\": 200, \"shape\": \"array\" },\n  \"POST\": { \"status\": 201, \"shape\": \"object\" },\n  \"PATCH\": { \"status\": 200, \"shape\": \"object\" },\n  \"DELETE\": { \"status\": 200, \"shape\": \"object\" }\n}" },
+    ],
   },
   {
     kind: "select",

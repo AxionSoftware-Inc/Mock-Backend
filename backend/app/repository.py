@@ -1,3 +1,4 @@
+import json
 import re
 from functools import cmp_to_key
 from typing import Any
@@ -7,7 +8,7 @@ from psycopg import errors
 from psycopg.types.json import Jsonb
 
 from .database import pool
-from .schemas import MockField, ProjectCreate, ResourceCreate, ResourceUpdate
+from .schemas import MockField, ProjectCreate, ProjectSettingsUpdate, ResourceCreate, ResourceUpdate
 
 
 class NotFoundError(Exception):
@@ -48,7 +49,7 @@ def list_projects() -> list[dict[str, Any]]:
     with pool.connection() as connection:
         rows = connection.execute(
             """
-            SELECT p.id, p.name, p.slug, p.created_at AS "createdAt",
+            SELECT p.id, p.name, p.slug, p.access, p.created_at AS "createdAt",
               count(DISTINCT r.id)::int AS "resourceCount",
               count(DISTINCT rec.id)::int AS "recordCount"
             FROM projects p
@@ -65,7 +66,7 @@ def get_project(slug: str) -> dict[str, Any]:
     with pool.connection() as connection:
         project = connection.execute(
             """
-            SELECT p.id, p.name, p.slug, p.created_at AS "createdAt"
+            SELECT p.id, p.name, p.slug, p.owner_id AS "ownerId", p.access, p.api_key AS "apiKey", p.created_at AS "createdAt"
             FROM projects p WHERE p.slug = %s
             """,
             (slug,),
@@ -91,6 +92,70 @@ def get_project(slug: str) -> dict[str, Any]:
     return {**project, "resources": resources}
 
 
+def get_api_model(slug: str) -> dict[str, Any]:
+    project = get_project(slug)
+    methods = [
+        {"method": "GET", "enabled": True},
+        {"method": "POST", "enabled": True},
+        {"method": "PATCH", "enabled": True},
+        {"method": "DELETE", "enabled": True},
+    ]
+    return {
+        "project": project["slug"],
+        "name": project["name"],
+        "access": project["access"],
+        "endpoints": [
+            {
+                "path": f"/{resource['name']}",
+                "resource": resource["name"],
+                "fields": resource["fields"],
+                "methods": methods,
+                "recordCount": resource["recordCount"],
+            }
+            for resource in project["resources"]
+        ],
+    }
+
+
+def project_row(connection, slug: str) -> dict[str, Any]:
+    row = connection.execute("SELECT id, name, slug, access, api_key AS \"apiKey\" FROM projects WHERE slug = %s", (slug,)).fetchone()
+    if not row:
+        raise NotFoundError("Project topilmadi.")
+    return row
+
+
+def record_project_revision(slug: str, reason: str) -> None:
+    snapshot = get_api_model(slug)
+    with pool.connection() as connection:
+        project = project_row(connection, slug)
+        version = connection.execute(
+            "SELECT COALESCE(max(version), 0) + 1 AS version FROM project_revisions WHERE project_id = %s",
+            (project["id"],),
+        ).fetchone()["version"]
+        connection.execute(
+            """
+            INSERT INTO project_revisions (id, project_id, version, reason, snapshot)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (uuid4(), project["id"], version, reason, Jsonb(snapshot)),
+        )
+
+
+def list_project_revisions(slug: str) -> list[dict[str, Any]]:
+    with pool.connection() as connection:
+        project = project_row(connection, slug)
+        rows = connection.execute(
+            """
+            SELECT id, version, reason, snapshot, created_at AS "createdAt"
+            FROM project_revisions
+            WHERE project_id = %s
+            ORDER BY version DESC
+            """,
+            (project["id"],),
+        ).fetchall()
+    return rows
+
+
 def create_project(payload: ProjectCreate) -> dict[str, Any]:
     requested_slug = slugify(payload.slug or payload.name)
     resource = slugify(payload.resource)
@@ -103,11 +168,11 @@ def create_project(payload: ProjectCreate) -> dict[str, Any]:
                 slug = requested_slug if payload.slug else available_slug(connection, requested_slug)
                 project = connection.execute(
                     """
-                    INSERT INTO projects (id, name, slug)
-                    VALUES (%s, %s, %s)
-                    RETURNING id, name, slug, created_at AS "createdAt"
+                    INSERT INTO projects (id, name, slug, access)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, name, slug, access, created_at AS "createdAt"
                     """,
-                    (project_id, payload.name.strip(), slug),
+                    (project_id, payload.name.strip(), slug, payload.access),
                 ).fetchone()
                 connection.execute(
                     "INSERT INTO resources (id, project_id, name) VALUES (%s, %s, %s)",
@@ -123,7 +188,9 @@ def create_project(payload: ProjectCreate) -> dict[str, Any]:
                     )
     except errors.UniqueViolation as error:
         raise_conflict(error)
-    return get_project(project["slug"])
+    created = get_project(project["slug"])
+    record_project_revision(created["slug"], "project.created")
+    return created
 
 
 def delete_project(slug: str) -> None:
@@ -131,6 +198,29 @@ def delete_project(slug: str) -> None:
         result = connection.execute("DELETE FROM projects WHERE slug = %s", (slug,))
     if not result.rowcount:
         raise NotFoundError("Project topilmadi.")
+
+
+def update_project_settings(slug: str, payload: ProjectSettingsUpdate) -> dict[str, Any]:
+    with pool.connection() as connection:
+        row = connection.execute(
+            """
+            UPDATE projects SET access = %s
+            WHERE slug = %s
+            RETURNING id, name, slug, owner_id AS "ownerId", access, api_key AS "apiKey", created_at AS "createdAt"
+            """,
+            (payload.access, slug),
+        ).fetchone()
+    if not row:
+        raise NotFoundError("Project topilmadi.")
+    record_project_revision(slug, f"project.access:{payload.access}")
+    return get_project(slug)
+
+
+def ensure_project_access(slug: str, api_key: str | None = None) -> None:
+    with pool.connection() as connection:
+        project = project_row(connection, slug)
+    if project["access"] == "private" and api_key != project["apiKey"]:
+        raise NotFoundError("API topilmadi.")
 
 
 def create_resource(slug: str, payload: ResourceCreate) -> dict[str, Any]:
@@ -153,7 +243,9 @@ def create_resource(slug: str, payload: ResourceCreate) -> dict[str, Any]:
                 replace_fields(connection, resource_id, payload.fields)
     except errors.UniqueViolation as error:
         raise_conflict(error)
-    return find_resource(slug, resource)
+    created = find_resource(slug, resource)
+    record_project_revision(slug, f"resource.created:{resource}")
+    return created
 
 
 def update_resource(slug: str, resource: str, payload: ResourceUpdate) -> dict[str, Any]:
@@ -179,13 +271,16 @@ def update_resource(slug: str, resource: str, payload: ResourceUpdate) -> dict[s
                 replace_fields(connection, found["id"], payload.fields)
         except errors.UniqueViolation as error:
             raise_conflict(error)
-    return find_resource(slug, next_resource)
+    updated = find_resource(slug, next_resource)
+    record_project_revision(slug, f"resource.updated:{resource}->{next_resource}")
+    return updated
 
 
 def delete_resource(slug: str, resource: str) -> None:
     found = find_resource(slug, resource)
     with pool.connection() as connection:
         connection.execute("DELETE FROM resources WHERE id = %s", (found["id"],))
+    record_project_revision(slug, f"resource.deleted:{resource}")
 
 
 def replace_fields(connection, resource_id: UUID, fields: list[MockField]) -> None:
@@ -323,24 +418,120 @@ def delete_record(slug: str, resource: str, record_id: UUID) -> dict[str, Any]:
     return {"id": row["id"], **row["data"]}
 
 
+def flow_layout(graph: dict[str, Any], layout: dict[str, Any] | None = None) -> dict[str, Any]:
+    if layout:
+        return layout
+    return {
+        "nodePositions": {
+            node["id"]: node.get("position", {"x": 0, "y": 0})
+            for node in graph.get("nodes", [])
+            if node.get("id")
+        }
+    }
+
+
+def flow_metadata(metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"schemaVersion": 1, "source": "manual", **(metadata or {})}
+
+
+def flow_payload(graph: dict[str, Any], layout: dict[str, Any] | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    runtime_graph = {"nodes": graph.get("nodes", []), "edges": graph.get("edges", [])}
+    return {
+        **runtime_graph,
+        "layout": flow_layout(runtime_graph, layout),
+        "metadata": flow_metadata(metadata),
+    }
+
+
 def get_flow(key: str) -> dict[str, Any]:
     with pool.connection() as connection:
-        row = connection.execute("SELECT graph FROM flows WHERE key = %s", (key,)).fetchone()
-    return row["graph"] if row else {"nodes": [], "edges": []}
+        row = connection.execute("SELECT graph, layout, metadata FROM flows WHERE key = %s", (key,)).fetchone()
+    if not row:
+        return flow_payload({"nodes": [], "edges": []}, metadata={"source": "empty"})
+    return flow_payload(row["graph"], row["layout"], row["metadata"])
 
 
 def save_flow(key: str, graph: dict[str, Any]) -> dict[str, Any]:
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", key):
         raise RecordValidationError("Flow key noto'g'ri.")
+    payload = flow_payload(graph, graph.get("layout"), graph.get("metadata"))
+    runtime_graph = {"nodes": payload["nodes"], "edges": payload["edges"]}
     with pool.connection() as connection:
         connection.execute(
             """
-            INSERT INTO flows (id, key, graph) VALUES (%s, %s, %s)
-            ON CONFLICT (key) DO UPDATE SET graph = EXCLUDED.graph, updated_at = now()
+            INSERT INTO flows (id, key, graph, layout, metadata) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (key) DO UPDATE SET
+              graph = EXCLUDED.graph,
+              layout = EXCLUDED.layout,
+              metadata = EXCLUDED.metadata,
+              updated_at = now()
             """,
-            (uuid4(), key, Jsonb(graph)),
+            (uuid4(), key, Jsonb(runtime_graph), Jsonb(payload["layout"]), Jsonb(payload["metadata"])),
         )
-    return graph
+    return payload
+
+
+def validate_flow_graph(graph: dict[str, Any]) -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    node_ids = {node.get("id") for node in nodes}
+
+    def issue(code: str, message: str, node_id: str | None = None, severity: str = "error", fix: str | None = None) -> None:
+        issues.append({"code": code, "severity": severity, "nodeId": node_id, "message": message, "fix": fix})
+
+    for node in nodes:
+        node_id_value = node.get("id")
+        data = node.get("data", {})
+        kind = data.get("kind")
+        config = data.get("config", {})
+        if kind == "request":
+            path = config.get("path")
+            method = config.get("method", "GET")
+            if method not in {"GET", "POST", "PATCH", "DELETE"}:
+                issue("request.method", "Request method noto'g'ri.", node_id_value, fix="GET, POST, PATCH yoki DELETE tanlang.")
+            if not path or not str(path).startswith("/"):
+                issue("request.path", "Request path '/' bilan boshlanishi kerak.", node_id_value, fix="Masalan: /posts")
+        if kind == "resource":
+            if not config.get("project"):
+                issue("resource.project", "Resource node project slug talab qiladi.", node_id_value)
+            if not config.get("resource"):
+                issue("resource.name", "Resource node resource nomi talab qiladi.", node_id_value)
+        if kind == "response":
+            contracts = config.get("contracts")
+            if contracts:
+                try:
+                    parsed = json.loads(contracts) if isinstance(contracts, str) else contracts
+                    for method in ("GET", "POST", "PATCH", "DELETE"):
+                        if method not in parsed:
+                            issue("response.contract", f"{method} response contract yo'q.", node_id_value, "warning")
+                except Exception:
+                    issue("response.contract_json", "Response contracts JSON noto'g'ri.", node_id_value, fix="Valid JSON object kiriting.")
+
+    for edge in edges:
+        if edge.get("source") not in node_ids:
+            issue("edge.source", "Edge source node topilmadi.", edge.get("source"))
+        if edge.get("target") not in node_ids:
+            issue("edge.target", "Edge target node topilmadi.", edge.get("target"))
+
+    request_nodes = [node for node in nodes if node.get("data", {}).get("kind") == "request"]
+    for request in request_nodes:
+        request_id = request.get("id")
+        path = request.get("data", {}).get("config", {}).get("path")
+        method = request.get("data", {}).get("config", {}).get("method", "GET")
+        try:
+            runtime_group(graph, method, path)
+        except FlowExecutionError as error:
+            issue("flow.unreachable", str(error), request_id, fix="Request -> Resource -> Output ulanishini tekshiring.")
+
+    return {"ok": not any(item["severity"] == "error" for item in issues), "issues": issues}
+
+
+def validate_flow(key: str) -> dict[str, Any]:
+    graph = get_flow(key)
+    if not graph.get("nodes"):
+        raise NotFoundError("Flow topilmadi yoki bo'sh.")
+    return validate_flow_graph(graph)
 
 
 def node_config(graph: dict[str, Any], kind: str, active_ids: set[str] | None = None) -> dict[str, Any]:
@@ -416,13 +607,24 @@ def reachable_response_id(graph: dict[str, Any], resource_id: str, group: str | 
     return None, seen
 
 
-def runtime_group(graph: dict[str, Any], method: str) -> tuple[str, str, str, set[str]]:
+def normalize_runtime_path(path: str | None) -> str | None:
+    if not path:
+        return None
+    clean = path.strip("/")
+    return f"/{clean}" if clean else None
+
+
+def runtime_group(graph: dict[str, Any], method: str, path: str | None = None) -> tuple[str, str, str, set[str]]:
+    expected_path = normalize_runtime_path(path)
     for request_id in [
         node.get("id")
         for node in graph.get("nodes", [])
         if node.get("data", {}).get("kind") == "request"
         and node.get("data", {}).get("config", {}).get("method", "GET") == method
     ]:
+        request_config = config_by_id(graph, request_id)
+        if expected_path and normalize_runtime_path(request_config.get("path")) != expected_path:
+            continue
         group = node_group(graph, request_id)
         resource_id = None
         for edge in graph.get("edges", []):
@@ -442,7 +644,8 @@ def runtime_group(graph: dict[str, Any], method: str) -> tuple[str, str, str, se
         if response_id:
             active_ids.add(request_id)
             return request_id, resource_id, response_id, active_ids
-    raise FlowExecutionError(f"{method} uchun ulangan Request -> Resource -> JSON Response group topilmadi.")
+    scope = f" {expected_path}" if expected_path else ""
+    raise FlowExecutionError(f"{method}{scope} uchun ulangan Request -> Resource -> JSON Response group topilmadi.")
 
 
 def node_id_legacy(graph: dict[str, Any], kind: str) -> str | None:
@@ -564,12 +767,12 @@ def apply_flow_transforms(graph: dict[str, Any], records: list[dict[str, Any]], 
     return output
 
 
-def execute_flow(key: str, method: str, payload: dict[str, Any] | None = None, record_id: UUID | None = None) -> tuple[dict[str, Any] | list[dict[str, Any]], int]:
+def execute_flow(key: str, method: str, payload: dict[str, Any] | None = None, record_id: UUID | None = None, path: str | None = None, api_key: str | None = None) -> tuple[dict[str, Any] | list[dict[str, Any]], int]:
     graph = get_flow(key)
     if not graph.get("nodes"):
         raise NotFoundError("Flow topilmadi yoki bo'sh.")
     try:
-        request_id, resource_id, _, active_ids = runtime_group(graph, method)
+        request_id, resource_id, _, active_ids = runtime_group(graph, method, path)
         request_config = config_by_id(graph, request_id)
         resource_config = config_by_id(graph, resource_id)
     except FlowExecutionError:
@@ -583,6 +786,7 @@ def execute_flow(key: str, method: str, payload: dict[str, Any] | None = None, r
     resource = resource_config.get("resource")
     if not project or not resource:
         raise FlowExecutionError("Resource node ichida project va resource kerak.")
+    ensure_project_access(project, api_key)
     if method == "GET":
         records = list_records(project, resource)
         return apply_flow_transforms(graph, records, active_ids), 200
